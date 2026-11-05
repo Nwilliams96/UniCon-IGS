@@ -1,5 +1,4 @@
-# 515Y–926R eASV Snakemake pipeline
-
+# UniCon-IGS workflow - Universal Amplicon pipeline with optional Internal Genomic Standards
 This workflow is in progress and is not yet ready for production use.
 
 Use the [interactive pipeline tutorial and configuration builder](https://www.nathanlrwilliams.com/eASV-Pipeline-Tutorial/)
