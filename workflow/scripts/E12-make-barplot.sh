@@ -12,4 +12,4 @@ qiime taxa barplot \
 
 cp \
   "${snakemake_output[0]}/visualization.qzv" \
-  "${snakemake_output[0]}/${timestamp}.${snakemake_params[studyName]}.18S.PR2.barplot.qzv"
+  "${snakemake_output[0]}/${timestamp}.${snakemake_params[projectName]}.18S.PR2.barplot.qzv"

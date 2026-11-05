@@ -2,12 +2,8 @@
 
 #Load dependencies
 library(tidyverse)
-library(lubridate)
-library(patchwork)
 library(data.table)
 library("Biostrings")
-
-#This script will load in the data for the cruise that is being uploaded to CMAP. We will convert it into long format.
 
 #Import data
 counts <- readr::read_tsv(snakemake@input[["mergedtabledada218Scorrected"]], show_col_types = FALSE) %>% as.data.table()

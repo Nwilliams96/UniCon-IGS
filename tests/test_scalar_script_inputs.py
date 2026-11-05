@@ -49,7 +49,7 @@ class ScalarScriptInputTests(unittest.TestCase):
                  "Feature ID\tTaxon\tConfidence\n001\td__Bacteria;p__Test\t0.95\n", ""),
                 ("normalize_canonical_16S_PR2_rank_prefixes", "fixture/PR2.tsv",
                  "Feature ID\tTaxon\tConfidence\n001\tEukaryota;Archaeplastida:plas\t0.8000\n", "normalized"),
-            ], target, "config = {'studyName': 'fixture'}\nCHLOROPLAST_PR2_MIN_CONFIDENCE = 0.7\n")
+            ], target, "config = {'projectName': 'fixture'}\nCHLOROPLAST_PR2_MIN_CONFIDENCE = 0.7\n")
             result = self.rows(root / target)
             self.assertEqual(result, [{"Feature ID": "001", "Taxon": "Eukaryota;Archaeplastida:plas", "Confidence": "0.8000"}])
             summary = self.rows(root / "results/02-proks/09-subsetting/tax-merged/fixture.PR2-plastid-routing-summary.tsv")

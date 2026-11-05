@@ -43,7 +43,7 @@ class DatabaseDagTests(unittest.TestCase):
         shared = root / "shared databases"
         (shared / "bbsplit-db/EUK-PROK-bbsplit-db").mkdir(parents=True)
         return dict(
-            samplesheet="config/samples.tsv", studyName="DAG-fixture",
+            samplesheet="config/samples.tsv",
             projectName="DAG-fixture", database_dir=str(shared),
             rawdatadir=str(root / "raw"), R1file_ending=".R1.fastq.gz",
             R2file_ending=".R2.fastq.gz", use_internal_standards=False,

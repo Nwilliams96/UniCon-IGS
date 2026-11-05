@@ -34,7 +34,7 @@ if (length(standard_slots) != length(standard_ids) ||
 }
 
 configured_standard_names <- paste(standard_ids, collapse = ", ")
-cruise_tag <- snakemake@config[["studyName"]]
+cruise_tag <- snakemake@config[["projectName"]]
 outdir <- "results/05-internal-std-corrected"
 figure_dir <- "results/06-figures"
 dir.create(outdir, recursive = TRUE, showWarnings = FALSE)

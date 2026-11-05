@@ -1,8 +1,12 @@
+import base64
 import importlib.util
+import re
 import tempfile
 import unittest
 import zipfile
 from pathlib import Path
+from types import SimpleNamespace
+from unittest import mock
 
 
 SCRIPT = Path(__file__).parents[1] / "workflow" / "scripts" / "generate_pipeline_report.py"
@@ -12,6 +16,98 @@ SPEC.loader.exec_module(REPORT)
 
 
 class GeneratePipelineReportTests(unittest.TestCase):
+    def render_branding_fixture(self, root, logo=None):
+        """Render synthetic QC records without running sequence processing."""
+        inputs = {
+            "samples": "sample\n001\n",
+            "split_summary": "sample\tprok_seqs_split\teuk_seqs_split\n001\t100\t20\n",
+            "stats16s": "sample-id\tinput\tfiltered\tdenoised\tmerged\tnon-chimeric\n001\t100\t95\t90\t85\t80\n",
+            "stats18s": "sample-id\tinput\tfiltered\tdenoised\tnon-chimeric\n001\t20\t18\t15\t10\n",
+            "long_data": (
+                "SampleID\tASV_hash\tDomain\tPhylum\tCorrected_Sequence_Counts\n"
+                "001\tA1\tArchaea\tThermoproteota\t80\n"
+                "001\tA2\tEukaryota\tDinoflagellata\t10\n"
+            ),
+        }
+        paths = {}
+        for name, content in inputs.items():
+            paths[name] = root / f"{name}.tsv"
+            paths[name].write_text(content, encoding="utf-8")
+        if logo is not None:
+            paths["logo"] = logo
+        output = root / "report.html"
+        REPORT.render_report({"projectName": "Branding fixture"}, paths, output)
+        return output.read_text(encoding="utf-8")
+
+    def test_branding_embeds_the_bundled_logo_for_offline_reports(self):
+        logo = SCRIPT.parents[1] / "assets" / "unicon-logo.png"
+        with tempfile.TemporaryDirectory() as tmp:
+            rendered = self.render_branding_fixture(Path(tmp), logo)
+        image = re.search(r'<img class="brand-logo" src="data:image/png;base64,([^\"]+)"', rendered)
+        self.assertIsNotNone(image)
+        self.assertEqual(base64.b64decode(image.group(1)), logo.read_bytes())
+        self.assertTrue(logo.read_bytes().startswith(b"\x89PNG\r\n\x1a\n"))
+        self.assertIn('<span>UniCon-IGS</span>', rendered)
+        self.assertIn('<h1>Branding fixture</h1>', rendered)
+        self.assertIn('alt="UniCon-IGS unicorn"', rendered)
+        self.assertIn("width:56px;height:56px;object-fit:contain;flex:none", rendered)
+        self.assertNotRegex(rendered, r'<(?:img|script)[^>]+src="https?://')
+        self.assertNotIn("linear-gradient(130deg,#12213c,#1d4ed8)", rendered)
+
+    def test_standalone_report_can_omit_a_logo_but_an_explicit_bad_path_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            rendered = self.render_branding_fixture(root)
+            self.assertIn('<span>UniCon-IGS</span>', rendered)
+            self.assertNotIn('<img class="brand-logo"', rendered)
+            with self.assertRaises(FileNotFoundError):
+                self.render_branding_fixture(root, root / "missing-logo.png")
+
+    def test_report_theme_matches_parchment_and_retains_accessible_text(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            rendered = self.render_branding_fixture(Path(tmp))
+        theme = re.search(r":root\{([^}]+)\}", rendered).group(1)
+        colours = dict(re.findall(r"--([a-z-]+):\s*(#[0-9a-f]{6})", theme))
+        self.assertEqual(colours, {
+            "ink": "#101010", "muted": "#636363", "line": "#d6cbb6",
+            "paper": "#fcf8ef", "wash": "#f3ead7", "accent": "#101010",
+        })
+
+        def luminance(colour):
+            channels = [int(colour[index:index + 2], 16) / 255 for index in (1, 3, 5)]
+            linear = [value / 12.92 if value <= 0.04045 else ((value + 0.055) / 1.055) ** 2.4
+                      for value in channels]
+            return sum(value * weight for value, weight in zip(linear, (0.2126, 0.7152, 0.0722)))
+
+        for background in ("paper", "wash"):
+            for text in ("ink", "muted"):
+                ratio = (luminance(colours[background]) + 0.05) / (luminance(colours[text]) + 0.05)
+                self.assertGreaterEqual(ratio, 4.5, (background, text, ratio))
+        self.assertEqual(REPORT.PALETTE, [
+            "#332288", "#88CCEE", "#44AA99", "#117733", "#999933",
+            "#DDCC77", "#CC6677", "#882255", "#AA4499", "#0072B2",
+            "#E69F00", "#009E73", "#D55E00", "#56B4E9", "#64748B",
+        ])
+
+    def test_snakemake_tracks_and_passes_the_bundled_logo(self):
+        rule = (SCRIPT.parents[1] / "rules" / "06-generate-report.smk").read_text()
+        self.assertIn('logo=workflow.source_path("../assets/unicon-logo.png")', rule)
+        scalar_names = (
+            "logo", "samples", "split_summary", "stats16s", "stats18s",
+            "correction_factors", "species_assignment", "chloroplast_audit",
+            "chloroplast_summary", "quality_16s", "quality_18s_paired",
+            "quality_18s_concatenated", "long_data",
+        )
+        inputs = {name: Path("inputs") / name for name in scalar_names}
+        inputs["cutadapt_qc"] = []
+        snakemake = SimpleNamespace(
+            input=SimpleNamespace(**inputs), config={"projectName": "Test"},
+            output=SimpleNamespace(html=Path("report.html")),
+        )
+        with mock.patch.object(REPORT, "render_report") as renderer:
+            REPORT.run_from_snakemake(snakemake)
+        self.assertEqual(renderer.call_args.args[1]["logo"], str(inputs["logo"]))
+
     def test_qiime_environment_identity_and_name_are_in_parameter_rows(self):
         rows = dict(REPORT.flatten_config({"qiime2_environment": {
             "kind": "named", "requested": "qiime-2026.7",
@@ -92,7 +188,7 @@ class GeneratePipelineReportTests(unittest.TestCase):
                 paths[name].write_text(content, encoding="utf-8")
             output = root / "report.html"
             REPORT.render_report(
-                {"studyName": "older-release", "SILVAversion": "138.2"},
+                {"projectName": "older-release", "SILVAversion": "138.2"},
                 paths,
                 output,
             )
@@ -260,7 +356,7 @@ class GeneratePipelineReportTests(unittest.TestCase):
             output = root / "report.html"
             REPORT.render_report(
                 {
-                    "studyName": "test-run",
+                    "projectName": "test-run",
                     "intstds": ["BP"],
                     "trunclens": {"truncR1": 220, "truncR2": 180},
                     "dada2": {
@@ -290,6 +386,7 @@ class GeneratePipelineReportTests(unittest.TestCase):
             )
             rendered = output.read_text(encoding="utf-8")
             self.assertIn("test-run", rendered)
+            self.assertIn("<title>test-run pipeline report</title>", rendered)
             self.assertIn("S-1", rendered)
             self.assertIn("Filtering loss", rendered)
             self.assertIn("Denoising loss", rendered)

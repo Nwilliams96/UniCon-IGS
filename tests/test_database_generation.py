@@ -23,12 +23,12 @@ DOWNLOAD_SPEC = importlib.util.spec_from_file_location(
 DOWNLOAD = importlib.util.module_from_spec(DOWNLOAD_SPEC)
 DOWNLOAD_SPEC.loader.exec_module(DOWNLOAD)
 
-PUBLISH_SCRIPT = ROOT / "workflow/scripts/publish_pr2_classifier.py"
-PUBLISH_SPEC = importlib.util.spec_from_file_location(
-    "publish_pr2_classifier", PUBLISH_SCRIPT
+SAVE_SCRIPT = ROOT / "workflow/scripts/save_classifier.py"
+SAVE_SPEC = importlib.util.spec_from_file_location(
+    "save_classifier", SAVE_SCRIPT
 )
-PUBLISH = importlib.util.module_from_spec(PUBLISH_SPEC)
-PUBLISH_SPEC.loader.exec_module(PUBLISH)
+SAVE = importlib.util.module_from_spec(SAVE_SPEC)
+SAVE_SPEC.loader.exec_module(SAVE)
 
 
 class DatabaseGenerationTests(unittest.TestCase):
@@ -56,7 +56,7 @@ class DatabaseGenerationTests(unittest.TestCase):
         bbsplit = (ROOT / "workflow/rules/prepare_bbsplit_db.smk").read_text(
             encoding="utf-8"
         )
-        pr2_publisher = (ROOT / "workflow/scripts/publish_pr2_classifier.py").read_text(
+        classifier_saver = (ROOT / "workflow/scripts/save_classifier.py").read_text(
             encoding="utf-8"
         )
         self.assertNotIn("tax-classifier-construction", classification)
@@ -90,9 +90,9 @@ class DatabaseGenerationTests(unittest.TestCase):
         self.assertIn("get-pr2-data", classification)
         self.assertIn("get-silva-data", classification)
         self.assertIn("--p-labels Bacteria Archaea Eukaryota --p-min-lens 1200 900 1400", classification)
-        self.assertIn("fcntl.flock", pr2_publisher)
-        self.assertIn("os.replace(temporary, destination)", pr2_publisher)
-        self.assertIn('["qiime", "tools", "validate", str(path)]', pr2_publisher)
+        self.assertIn("fcntl.flock", classifier_saver)
+        self.assertIn("os.replace(temporary, destination)", classifier_saver)
+        self.assertIn('["qiime", "tools", "validate", str(path)]', classifier_saver)
         self.assertFalse((ROOT / "workflow/scripts/ensure_pr2_classifier.py").exists())
         self.assertIn("rule download_SILVA_144_species_reference:", classification)
         self.assertIn('config.get("SILVAversion", "144")', common)
@@ -107,6 +107,8 @@ class DatabaseGenerationTests(unittest.TestCase):
         self.assertIn('DATABASE_PREFIX + "classification/SILVA"', downloads)
         self.assertNotIn("rule download_pr2:", downloads)
         self.assertNotIn('"v7.2.0/utils/aria2c"', downloads)
+        self.assertIn('"logs/bbsplit_prok_db_download.log"', downloads)
+        self.assertIn('"logs/bbsplit_euk_db_download.log"', downloads)
         self.assertIn("46683398d8859aeef635fff49112c4d6453d4ebd70bf8b9fee006cb5b84273b1", downloads)
         self.assertIn("c4a396035271db516a0054f1d750d3081ca5a11831b44756e91590a79ed0f109", downloads)
         self.assertRegex(classification, r'script:\s+"\.\./scripts/download_verified_reference\.py"')
@@ -150,6 +152,18 @@ class DatabaseGenerationTests(unittest.TestCase):
             "input:\n        temp(",
             downloads,
         )
+
+    def test_shared_bbsplit_reference_outputs_are_persistent(self):
+        downloads = (ROOT / "workflow/rules/download_databases.smk").read_text()
+        for rule, filename in (
+            ("download_prok_db", "SILVA_132_PROK.cdhit95pc.fasta"),
+            ("download_euk_db", "SILVA_132_and_PR2_EUK.cdhit95pc.fasta"),
+        ):
+            with self.subTest(rule=rule):
+                body = downloads.split(f"rule {rule}:", 1)[1].split("\nrule ", 1)[0]
+                output = body.split("output:", 1)[1].split("log:", 1)[0]
+                self.assertNotRegex(output, r"\btemp\s*\(")
+                self.assertIn('DATABASE_PREFIX + "bbsplit-db/' + filename + '"', output)
 
     def test_reference_download_is_atomic_and_checksum_verified(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -229,14 +243,14 @@ class DatabaseGenerationTests(unittest.TestCase):
                     network.assert_not_called()
                     qiime.assert_called_once()
 
-    def test_pr2_publication_is_locked_atomic_and_reusable(self):
+    def test_pr2_saving_is_locked_atomic_and_reusable(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             source = root / "private" / "classifier.qza"
             destination = root / "shared" / "classifier.qza"
             marker = root / "ready" / "classifier.ready"
             lock = root / "shared" / ".build.lock"
-            log = root / "logs" / "publish.log"
+            log = root / "logs" / "save.log"
             source.parent.mkdir(parents=True)
             source.write_bytes(b"validated fixture")
 
@@ -244,15 +258,15 @@ class DatabaseGenerationTests(unittest.TestCase):
                 path = Path(path)
                 return path.is_file() and path.stat().st_size > 0
 
-            with mock.patch.object(PUBLISH, "classifier_is_valid", valid_if_nonempty):
-                PUBLISH.publish_classifier(source, destination, lock, marker, log)
+            with mock.patch.object(SAVE, "classifier_is_valid", valid_if_nonempty):
+                SAVE.save_classifier(source, destination, lock, marker, log)
                 self.assertEqual(destination.read_bytes(), b"validated fixture")
                 self.assertTrue(marker.exists())
 
                 source.write_bytes(b"new staged bytes should not replace valid shared")
-                PUBLISH.publish_classifier(source, destination, lock, marker, log)
+                SAVE.save_classifier(source, destination, lock, marker, log)
                 self.assertEqual(destination.read_bytes(), b"validated fixture")
-                self.assertFalse(list(destination.parent.glob("*.publishing.*")))
+                self.assertFalse(list(destination.parent.glob("*.saving.*")))
 
     def test_existing_classifier_validation_never_writes_beside_the_source(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -260,11 +274,11 @@ class DatabaseGenerationTests(unittest.TestCase):
             source = self.write_classifier(root / "read-only source" / "provided.qza")
             before = source.read_bytes()
             marker = root / "project" / "classifier.ready"
-            with mock.patch.object(PUBLISH.subprocess, "run") as qiime:
+            with mock.patch.object(SAVE.subprocess, "run") as qiime:
                 qiime.return_value.returncode = 0
-                PUBLISH.publish_classifier(
-                    source, source, root / "project" / "publish.lock",
-                    marker, root / "project" / "publish.log",
+                SAVE.save_classifier(
+                    source, source, root / "project" / "save.lock",
+                    marker, root / "project" / "save.log",
                     read_only=True, label="SILVA",
                 )
             self.assertTrue(marker.exists())
@@ -272,15 +286,15 @@ class DatabaseGenerationTests(unittest.TestCase):
             self.assertEqual(list(source.parent.iterdir()), [source])
             self.assertIn(str(source.resolve()), marker.read_text())
 
-    def test_publication_rejects_wrong_artifact_type_before_running_qiime(self):
+    def test_saving_rejects_wrong_artifact_type_before_running_qiime(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             source = self.write_classifier(root / "sequences.qza", "FeatureData[Sequence]")
-            with mock.patch.object(PUBLISH.subprocess, "run") as qiime:
+            with mock.patch.object(SAVE.subprocess, "run") as qiime:
                 with self.assertRaisesRegex(RuntimeError, "failed QIIME validation"):
-                    PUBLISH.publish_classifier(
-                        source, root / "classifier.qza", root / "publish.lock",
-                        root / "ready", root / "publish.log", label="SILVA",
+                    SAVE.save_classifier(
+                        source, root / "classifier.qza", root / "save.lock",
+                        root / "ready", root / "save.log", label="SILVA",
                     )
                 qiime.assert_not_called()
             self.assertFalse((root / "classifier.qza").exists())
@@ -294,11 +308,11 @@ class DatabaseGenerationTests(unittest.TestCase):
             with zipfile.ZipFile(destination, "a") as archive:
                 archive.writestr("fixture/data/old.txt", "old valid classifier")
             expected = hashlib.md5(source.read_bytes()).hexdigest()
-            with mock.patch.object(PUBLISH.subprocess, "run") as qiime:
+            with mock.patch.object(SAVE.subprocess, "run") as qiime:
                 qiime.return_value.returncode = 0
-                PUBLISH.publish_classifier(
-                    source, destination, root / "shared" / "publish.lock",
-                    root / "ready", root / "publish.log", expected_md5=expected,
+                SAVE.save_classifier(
+                    source, destination, root / "shared" / "save.lock",
+                    root / "ready", root / "save.log", expected_md5=expected,
                 )
             self.assertEqual(destination.read_bytes(), source.read_bytes())
 
@@ -395,7 +409,7 @@ class DatabaseGenerationTests(unittest.TestCase):
             ROOT / "workflow/rules/prepare_classification_dbs.smk",
             ROOT / "workflow/rules/02-denoise-and-export-prok.smk",
             ROOT / "workflow/rules/05-internal-standard-correction.smk",
-            ROOT / "workflow/scripts/publish_pr2_classifier.py",
+            ROOT / "workflow/scripts/save_classifier.py",
             ROOT / "workflow/scripts/resolve_pr2_plastids.py",
             ROOT / "workflow/scripts/export_unmerged_16S.py",
             ROOT / "workflow/scripts/assign_silva_species.R",

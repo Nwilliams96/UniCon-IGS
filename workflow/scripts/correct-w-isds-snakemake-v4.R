@@ -9,7 +9,7 @@ library(tidyverse)
 #Set paths
 isd_path  <- snakemake@input[["isd"]]
 isd_added_path <- snakemake@input[["isd_added"]]
-cruise_tag <- snakemake@config[["studyName"]]
+cruise_tag <- snakemake@config[["projectName"]]
 isd_1_id <- snakemake@params[["intstd1name"]]
 isd_2_id <- snakemake@params[["intstd2name"]]
 isd_3_id <- snakemake@params[["intstd3name"]]

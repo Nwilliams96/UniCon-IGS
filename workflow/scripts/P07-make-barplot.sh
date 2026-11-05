@@ -8,4 +8,4 @@ qiime taxa barplot \
   --m-metadata-file ${snakemake_input[prokmetadata]} \
   --output-dir ${snakemake_output[0]}
 
-mv ${snakemake_output[0]}/visualization.qzv ${snakemake_output[0]}/$timestamp.${snakemake_params[studyName]}.16S.barplot.qzv
+mv ${snakemake_output[0]}/visualization.qzv ${snakemake_output[0]}/$timestamp.${snakemake_params[projectName]}.16S.barplot.qzv

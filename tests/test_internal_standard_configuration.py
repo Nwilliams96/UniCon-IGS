@@ -14,7 +14,7 @@ COMMON = (ROOT / "workflow/rules/common.smk").read_text()
 class InternalStandardConfigurationTests(unittest.TestCase):
     def resolve(self, config):
         block = COMMON[COMMON.index('INTERNAL_STANDARD_IDS = config.get("intstds", [])'):COMMON.index("\nAMPLICON_CONCENTRATIONS_FILE =")]
-        scope = dict(config=dict(studyName="fixture", **config),
+        scope = dict(config={"projectName": "fixture", **config},
                      USE_INTERNAL_STANDARDS=config.get("use_internal_standards", False),
                      WorkflowError=WorkflowError, re=re, combinations=combinations)
         exec(compile(block, "common.smk:internal-standards", "exec"), scope)
@@ -64,7 +64,7 @@ class InternalStandardConfigurationTests(unittest.TestCase):
 
     def test_sample_sheet_amount_columns_are_still_validated_before_processing(self):
         block = COMMON.split("# read sample sheet", 1)[1]
-        block = block[block.index("if USE_INTERNAL_STANDARDS:"):block.index("# define output as function")]
+        block = block[block.index("if USE_INTERNAL_STANDARDS:"):block.index("def get_final_output():")]
         for enabled, columns, missing in (
             (True, ["sample", "BP_ng", "DR_ng"], None),
             (True, ["sample", "BP_ng"], "DR_ng"),
@@ -87,14 +87,14 @@ class InternalStandardConfigurationTests(unittest.TestCase):
     def test_project_name_uses_the_explicit_config_value_and_keeps_name_validation(self):
         block = COMMON[COMMON.index("PROJECT_NAME ="):COMMON.index("RESULTS_LONG_DATA =")]
         self.assertIn('PROJECT_NAME = config["projectName"]', block)
-        config = {"projectName": "Configured-Project_001", "studyName": "Other-Study"}
+        config = {"projectName": "Configured-Project_001"}
         scope = dict(config=config, WorkflowError=WorkflowError, re=re)
         exec(compile(block, "common.smk:project-name", "exec"), scope)
         self.assertEqual(scope["PROJECT_NAME"], "Configured-Project_001")
         self.assertEqual(scope["RESULTS_EXPORT_DIR"], "Configured-Project_001-Results-Export")
         with self.assertRaises(KeyError):
             exec(compile(block, "common.smk:project-name", "exec"),
-                 dict(config={"studyName": "No-Fallback"}, WorkflowError=WorkflowError, re=re))
+                 dict(config={}, WorkflowError=WorkflowError, re=re))
         for invalid_name in ("", "bad name", " bad", "../bad", "bad/project"):
             with self.subTest(invalid_name=invalid_name), self.assertRaisesRegex(
                 WorkflowError, "projectName may contain only"

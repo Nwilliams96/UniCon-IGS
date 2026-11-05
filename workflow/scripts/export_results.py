@@ -31,7 +31,7 @@ def write_taxonomy_summary(long_data_path, output_path, rank):
             writer.writerow([sample, taxon, f"{abundance:.10g}", f"{relative:.10g}"])
 
 
-def export_results(sources, destinations, readme_path, study_name, summaries=None):
+def export_results(sources, destinations, readme_path, project_name, summaries=None):
     if len(sources) != len(destinations):
         raise ValueError("Every export source must have one destination")
 
@@ -57,7 +57,7 @@ def export_results(sources, destinations, readme_path, study_name, summaries=Non
     readme = Path(readme_path)
     readme.parent.mkdir(parents=True, exist_ok=True)
     contents = [
-        f"Results export for {study_name}",
+        f"Results export for {project_name}",
         "",
         "This folder contains the small, user-facing outputs from the completed pipeline run.",
         "The HTML report is self-contained and can be opened directly in a web browser.",
@@ -77,6 +77,6 @@ if "snakemake" in globals():
         list(snakemake.input.data_files),
         list(snakemake.output.data_files),
         str(snakemake.output.readme),
-        str(snakemake.config["studyName"]),
+        str(snakemake.config["projectName"]),
         list(snakemake.output.summaries),
     )

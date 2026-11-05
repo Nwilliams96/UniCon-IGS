@@ -5,6 +5,14 @@ Use the [interactive pipeline tutorial and configuration builder](https://www.na
 to prepare a study-specific setup package. The tutorial's HTTPS clone command
 downloads the current version of this repository's `main` branch.
 
+`projectName` is the single name used in `config/config.yml` for output prefixes,
+the report, the Results-Export folder and the CARC job label. Remove the old
+`studyName` entry from existing configs. If both previously had the same value,
+keep that value as `projectName`. If they differed, filenames now follow
+`projectName`; choose the former study name to retain existing output prefixes,
+or expect new filenames and potentially repeated work. Existing results are not
+renamed automatically.
+
 ## Requirements
 
 Install [Git](https://git-scm.com/downloads) and
@@ -93,12 +101,12 @@ Snakemake rules. The high-level dependency order is:
 ```text
 SILVA or PR2 (selected independently)
   -> existing classifier: validate and reuse
-  -> classifier URL: download -> validate + locked atomic publication
+  -> classifier URL: download -> validate + locked atomic save
   -> no URL: RESCRIPt reference acquisition -> visible preparation rules
       SILVA: reverse transcribe -> cull -> length filter -> dereplicate
       PR2: normalize rank prefixes -> cull -> dereplicate
       -> primer extraction -> extracted-reference dereplication [amplicon mode]
-      -> classifier training -> validation + locked atomic publication
+      -> classifier training -> validation + locked atomic save
 
 canonical 16S ASVs
   -> selected SILVA classification -> SILVA taxonomy export --+
@@ -251,7 +259,8 @@ official download or a compatible pre-existing classifier for that release.
 The workflow checks this limitation before sample processing.
 
 Classifier construction uses project-private intermediates under
-`.snakemake/database-build/`. Locks serialize validation and atomic publication
+`.snakemake/database-build/`. The `workflow/scripts/save_classifier.py` helper
+validates and safely saves completed classifiers; locks coordinate atomic saves
 to the selected destination. Compatible completed downloads and trained models
 are reused; separate identities prevent different URLs, releases, recipes, or
 training regions from silently sharing a classifier. Independent first-time
@@ -334,8 +343,8 @@ From the project directory, submit the CARC job with:
 sbatch run_snakemake_USC_CARC_only.sh
 ```
 
-The script reads `studyName` from `config/config.yml`, submits itself through
-Slurm, and labels the queue entry and log files as `<studyName>`. Calling
+The script reads `projectName` from `config/config.yml`, submits itself through
+Slurm, and labels the queue entry and log files as `<projectName>`. Calling
 the file with `sbatch` still works, but the log filename initially uses the
 generic `pipeline` label because Slurm opens it before the script runs.
 Before starting Snakemake, the CARC runner also detects config files whose
@@ -366,7 +375,7 @@ so final classifier training remains single-core.
 The final workflow target creates a self-contained report at:
 
 ```text
-results/07-report/<studyName>.pipeline-report.html
+results/07-report/<projectName>.pipeline-report.html
 ```
 
 The report records each classifier's declared release, preparation method,

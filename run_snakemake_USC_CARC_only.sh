@@ -14,9 +14,9 @@
 
 set -euo pipefail
 
-read_study_name() {
+read_project_name() {
   awk '
-    /^[[:space:]]*studyName[[:space:]]*:/ {
+    /^[[:space:]]*projectName[[:space:]]*:/ {
       sub(/^[^:]*:[[:space:]]*/, "")
       gsub(/^["'\'' ]+|["'\'' ]+$/, "")
       print
@@ -37,16 +37,16 @@ read_config_value() {
   ' config/config.yml
 }
 
-STUDY_NAME="$(read_study_name)"
-if [[ -z "${STUDY_NAME}" ]]; then
-  STUDY_NAME="pipeline"
+PROJECT_NAME="$(read_project_name)"
+if [[ -z "${PROJECT_NAME}" ]]; then
+  PROJECT_NAME="pipeline"
 fi
-JOB_LABEL="${STUDY_NAME}"
+JOB_LABEL="${PROJECT_NAME}"
 JOB_LABEL="$(printf '%s' "${JOB_LABEL}" | sed 's/[^A-Za-z0-9._-]/_/g')"
 
 # Slurm reads #SBATCH directives before running this file, so it cannot obtain
-# studyName from config.yml at that stage. When launched with bash, submit this
-# same script with the detected study name. Inside the allocation, continue to
+# projectName from config.yml at that stage. When launched with bash, submit this
+# same script with the detected project name. Inside the allocation, continue to
 # the workflow normally.
 if [[ -z "${SLURM_JOB_ID:-}" ]]; then
   mkdir -p logs
@@ -61,7 +61,7 @@ fi
 scontrol update JobId="${SLURM_JOB_ID}" JobName="${JOB_LABEL}" || true
 
 echo "Started at: $(date) on $(hostname)"
-echo "Study: ${STUDY_NAME}; Slurm job: ${JOB_LABEL} (${SLURM_JOB_ID})"
+echo "Project: ${PROJECT_NAME}; Slurm job: ${JOB_LABEL} (${SLURM_JOB_ID})"
 mkdir -p logs
 
 # ZIP files transferred from another computer can preserve timestamps that are

@@ -6,6 +6,7 @@ import importlib.util
 import itertools
 import json
 from pathlib import Path
+import runpy
 import tempfile
 import types
 import unittest
@@ -284,6 +285,38 @@ class DatabaseChoiceTests(unittest.TestCase):
             result = json.loads(output.read_text())
             self.assertEqual(result["version"], "138.2")
             self.assertEqual(result["rescript"], "2026.7.0")
+
+    def test_capability_script_reads_database_parameter_for_both_references(self):
+        releases = {"SILVA": "138.2", "PR2": "5.1.1"}
+        actions = {
+            action: types.SimpleNamespace(signature=types.SimpleNamespace(parameters={
+                "version": types.SimpleNamespace(qiime_type={releases[database]})
+            }))
+            for database, action in (("SILVA", "get_silva_data"), ("PR2", "get_pr2_data"))
+        }
+        manager = types.SimpleNamespace(plugins={"rescript": types.SimpleNamespace(actions=actions)})
+        modules = {
+            "qiime2": types.SimpleNamespace(__version__="2026.7.0"),
+            "qiime2.sdk": types.SimpleNamespace(PluginManager=lambda: manager),
+            "rescript": types.SimpleNamespace(__version__="2026.7.0"),
+            "sklearn": types.SimpleNamespace(__version__="1.7.1"),
+        }
+        rules = (ROOT / "workflow/rules/prepare_classification_dbs.smk").read_text()
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict("sys.modules", modules):
+            for database, version in releases.items():
+                with self.subTest(database=database):
+                    block = rules.split(f"rule check_{database.lower()}_reference_capability:", 1)[1].split("\nif ", 1)[0]
+                    self.assertIn(f'database="{database}"', block)
+                    output = Path(tmp) / database / "capability.json"
+                    snakemake = types.SimpleNamespace(
+                        params=types.SimpleNamespace(database=database, version=version),
+                        output=[str(output)],
+                    )
+                    runpy.run_path(str(ROOT / "workflow/scripts/check_reference_capability.py"),
+                                   init_globals={"snakemake": snakemake})
+                    result = json.loads(output.read_text())
+                    self.assertEqual(result["database"], database)
+                    self.assertEqual(result["version"], version)
 
 
 if __name__ == "__main__":

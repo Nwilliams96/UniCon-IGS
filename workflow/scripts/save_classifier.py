@@ -1,4 +1,4 @@
-"""Validate and atomically publish a completed SILVA or PR2 classifier.
+"""Validate and atomically save a completed SILVA or PR2 classifier.
 
 The scientific construction steps remain visible as individual Snakemake
 rules. This helper is intentionally limited to the infrastructure operation
@@ -52,7 +52,7 @@ def write_marker(marker, classifier):
     os.replace(temporary, marker)
 
 
-def publish_classifier(source, destination, lock_path, marker, log_path,
+def save_classifier(source, destination, lock_path, marker, log_path,
                        read_only=False, label="PR2", expected_md5=None):
     source = Path(source)
     destination = Path(destination)
@@ -78,11 +78,11 @@ def publish_classifier(source, destination, lock_path, marker, log_path,
         ):
             raise RuntimeError(f"Staged {label} classifier failed QIIME validation: {source}")
 
-        log_handle.write(f"Waiting for shared {label} publication lock: {lock_path}\n")
+        log_handle.write(f"Waiting for shared {label} save lock: {lock_path}\n")
         log_handle.flush()
         with lock_path.open("a+b") as lock_handle:
             fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX)
-            log_handle.write(f"Acquired shared {label} publication lock\n")
+            log_handle.write(f"Acquired shared {label} save lock\n")
             log_handle.flush()
 
             checksum_agrees = True
@@ -104,7 +104,7 @@ def publish_classifier(source, destination, lock_path, marker, log_path,
                 )
 
             temporary = destination.with_name(
-                destination.name + f".publishing.{os.getpid()}"
+                destination.name + f".saving.{os.getpid()}"
             )
             try:
                 with source.open("rb") as input_handle, temporary.open("wb") as output:
@@ -113,7 +113,7 @@ def publish_classifier(source, destination, lock_path, marker, log_path,
                     os.fsync(output.fileno())
                 if not classifier_is_valid(temporary, log_handle):
                     raise RuntimeError(
-                        f"Copied {label} classifier failed validation before publication"
+                        f"Copied {label} classifier failed validation before saving"
                     )
                 if expected_md5:
                     digest = hashlib.md5()
@@ -121,19 +121,19 @@ def publish_classifier(source, destination, lock_path, marker, log_path,
                         for chunk in iter(lambda: copied.read(1024 * 1024), b""):
                             digest.update(chunk)
                     if digest.hexdigest().lower() != expected_md5.lower():
-                        raise RuntimeError(f"Copied {label} classifier failed MD5 verification before publication")
+                        raise RuntimeError(f"Copied {label} classifier failed MD5 verification before saving")
                 os.replace(temporary, destination)
             finally:
                 temporary.unlink(missing_ok=True)
 
             if not classifier_is_valid(destination, log_handle):
-                raise RuntimeError(f"Published {label} classifier failed QIIME validation")
+                raise RuntimeError(f"Saved {label} classifier failed QIIME validation")
             write_marker(marker, destination)
-            log_handle.write(f"Published {label} classifier atomically: {destination}\n")
+            log_handle.write(f"Saved {label} classifier atomically: {destination}\n")
 
 
 if "snakemake" in globals():
-    publish_classifier(
+    save_classifier(
         snakemake.input.classifier,
         snakemake.params.classifier,
         snakemake.params.lock,

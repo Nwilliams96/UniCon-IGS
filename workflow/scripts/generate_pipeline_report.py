@@ -1487,32 +1487,73 @@ def render_report(config, paths, output_path):
     assignment_chart = svg_assignment_counts(assignment_totals)
     taxa_chart = svg_top_taxa(taxa_totals)
     generated = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M %Z")
-    study = config.get("studyName", "Amplicon run")
+    project_name = config.get("projectName", "Amplicon run")
+    # Allow standalone callers to omit branding; Snakemake supplies the logo.
+    logo_path = paths.get("logo")
+    # Start without an image when no logo was supplied.
+    logo_html = ""
+    if logo_path:  # Embed the supplied image directly in the downloadable HTML.
+        # Encode the PNG so the report needs no internet or accompanying image file.
+        encoded_logo = base64.b64encode(Path(logo_path).read_bytes()).decode("ascii")
+        # Use a dedicated class to keep the header logo small.
+        logo_html = (
+            f'<img class="brand-logo" src="data:image/png;base64,{encoded_logo}" '
+            'alt="UniCon-IGS unicorn">'
+        )
     document = f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>{esc(study)} pipeline report</title>
+<title>{esc(project_name)} pipeline report</title>
 <style>
-:root{{--ink:#172033;--muted:#667085;--line:#dfe4ea;--paper:#fff;--wash:#f4f7fb;--blue:#2563eb;--teal:#0d9488}}
+/* Match the configuration website's surfaces without changing chart data colours. */
+:root{{
+  --ink:#101010; /* Use near-black for readable text and branding. */
+  --muted:#636363; /* Keep secondary text readable on parchment and cream. */
+  --line:#d6cbb6; /* Use warm borders to match the configuration page. */
+  --paper:#fcf8ef; /* Give report sections a light cream surface. */
+  --wash:#f3ead7; /* Use the website's parchment colour around the sections. */
+  --accent:#101010; /* Use a neutral accent instead of the former blue branding. */
+  --serif:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif; /* Match the website's headings with local font fallbacks. */
+}}
 *{{box-sizing:border-box}} body{{margin:0;background:var(--wash);color:var(--ink);font:15px/1.55 Inter,ui-sans-serif,system-ui,-apple-system,sans-serif}}
-header{{background:linear-gradient(130deg,#12213c,#1d4ed8);color:white;padding:56px max(24px,calc((100vw - 1180px)/2)) 48px}}
-header h1{{font-size:clamp(32px,5vw,56px);line-height:1.05;margin:.15em 0}} header p{{margin:0;opacity:.82}}
-nav{{position:sticky;top:0;z-index:3;background:#ffffffee;backdrop-filter:blur(9px);border-bottom:1px solid var(--line);padding:12px max(24px,calc((100vw - 1180px)/2));overflow:auto;white-space:nowrap}}
-nav a{{color:#344054;text-decoration:none;margin-right:22px;font-weight:650}}
+/* Replace the blue banner while retaining its existing spacing and project title. */
+header{{background:var(--wash);color:var(--ink);padding:56px max(24px,calc((100vw - 1180px)/2)) 48px}}
+/* Keep a small, uncropped unicorn next to the pipeline name on narrow screens too. */
+.report-brand{{display:flex;align-items:center;gap:12px;margin-bottom:18px;font-family:var(--serif);font-size:22px;font-weight:700}}
+.brand-logo{{display:block;width:56px;height:56px;object-fit:contain;flex:none}} /* Preserve the transparent image's proportions. */
+header h1{{font-family:var(--serif);font-size:clamp(32px,5vw,56px);line-height:1.05;margin:.15em 0}} /* Keep the project name as the main heading. */
+header p{{margin:0;opacity:.82}}
+/* Retain the sticky navigation and scrolling behaviour on a parchment surface. */
+nav{{position:sticky;top:0;z-index:3;background:rgba(243,234,215,.96);backdrop-filter:blur(9px);border-bottom:1px solid var(--line);padding:12px max(24px,calc((100vw - 1180px)/2));overflow:auto;white-space:nowrap}}
+nav a{{color:var(--ink);text-decoration:none;margin-right:22px;font-weight:650}} /* Keep navigation text consistent with the website. */
 main{{max-width:1180px;margin:28px auto 70px;padding:0 22px}} section{{background:var(--paper);border:1px solid var(--line);border-radius:16px;padding:28px;margin:20px 0;box-shadow:0 10px 28px #1018280a}}
-h2{{font-size:25px;margin:.1em 0 .35em}} h3{{margin-top:28px}} .eyebrow{{color:var(--blue);font-size:12px;font-weight:800;letter-spacing:.12em;text-transform:uppercase}}
-.cards{{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin:24px 0}} .card{{border:1px solid var(--line);border-radius:12px;padding:18px;background:#fbfcfe}} .card strong{{display:block;font-size:28px;line-height:1.2}} .card span{{color:var(--muted);font-size:13px}}
-.table-wrap{{overflow:auto;border:1px solid var(--line);border-radius:10px}} table{{width:100%;border-collapse:collapse;white-space:nowrap}} th,td{{text-align:left;padding:10px 12px;border-bottom:1px solid var(--line)}} thead th{{background:#f8fafc;font-size:12px;text-transform:uppercase;letter-spacing:.04em}} tbody tr:last-child td,tbody tr:last-child th{{border-bottom:0}}
+/* Use the neutral accent for section labels; scientific plot colours stay unchanged. */
+h2{{font-size:25px;margin:.1em 0 .35em}} h3{{margin-top:28px}} .eyebrow{{color:var(--accent);font-size:12px;font-weight:800;letter-spacing:.12em;text-transform:uppercase}}
+/* Carry the parchment surface into summary cards without changing their values or layout. */
+.cards{{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin:24px 0}} .card{{border:1px solid var(--line);border-radius:12px;padding:18px;background:var(--wash)}} .card strong{{display:block;font-size:28px;line-height:1.2}} .card span{{color:var(--muted);font-size:13px}}
+/* Match table headers to the warm page palette while retaining horizontal scrolling. */
+.table-wrap{{overflow:auto;border:1px solid var(--line);border-radius:10px}} table{{width:100%;border-collapse:collapse;white-space:nowrap}} th,td{{text-align:left;padding:10px 12px;border-bottom:1px solid var(--line)}} thead th{{background:var(--wash);font-size:12px;text-transform:uppercase;letter-spacing:.04em}} tbody tr:last-child td,tbody tr:last-child th{{border-bottom:0}}
 .pill{{display:inline-block;padding:3px 8px;border-radius:99px;font-size:12px;font-weight:750}} .pill.good{{background:#dbeafe;color:#1e40af}} .pill.warn{{background:#fef3c7;color:#92400e}} .pill.bad{{background:#fce7f3;color:#9d174d}} .pill.neutral{{background:#e2e8f0;color:#475569}}
 .svg-label{{fill:#475467;font-size:12px}} .svg-total{{fill:#344054;font-size:12px;font-weight:700}} .grid{{stroke:#e4e7ec;stroke-width:1}} .axis-tick{{stroke:#94a3b8;stroke-width:1}} svg{{max-width:100%;height:auto}} .frozen-chart{{display:grid;grid-template-columns:78px minmax(0,1fr);align-items:start;margin:18px 0;border:1px solid var(--line);border-radius:10px;background:white;overflow:hidden}} .frozen-y-axis{{display:block;max-width:none;background:white;border-right:1px solid var(--line);z-index:1}} .chart-scroll{{overflow-x:auto;min-width:0}} .scroll-chart-svg{{display:block;max-width:none;height:auto}}
 .chart-legend{{display:flex;flex-wrap:wrap;gap:10px 22px;align-items:center;padding:12px 10px 2px;min-width:max-content}} .legend-item{{display:inline-flex;align-items:center;gap:7px;color:#475467;font-size:12px;font-weight:650}} .legend-swatch{{display:inline-block;width:12px;height:12px;border-radius:2px;flex:none}}
 .explorer-controls{{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:14px;margin:22px 0 12px}} .explorer-control label{{display:block;margin-bottom:5px;color:#344054;font-size:13px;font-weight:750}} .explorer-control select{{width:100%;padding:10px 12px;border:1px solid #cbd5e1;border-radius:8px;background:white;color:var(--ink);font:inherit}} .explorer-control select:disabled{{background:#f1f5f9;color:#94a3b8}} .small-muted{{color:var(--muted);font-size:13px}} .taxonomy-chart{{display:grid;grid-template-columns:54px minmax(0,1fr);margin:20px 0 8px;border:1px solid var(--line);border-radius:10px;background:white;overflow:hidden}} .taxonomy-y-axis{{position:relative;height:450px;border-right:1px solid var(--line);background:white;z-index:1}} .taxonomy-y-axis span{{position:absolute;right:8px;transform:translateY(-50%);color:#475467;font-size:12px}} .taxonomy-scroll{{overflow-x:auto;min-width:0;padding:20px 18px;background:repeating-linear-gradient(to bottom,#fff 0,#fff 74px,#e4e7ec 75px)}} .taxonomy-stacked-plot{{display:flex;align-items:flex-start;gap:5px;height:410px;min-width:max-content}} .taxonomy-sample-column{{position:relative;display:flex;flex-direction:column;justify-content:flex-start;width:34px;height:400px}} .taxonomy-stacked-bar{{display:flex;flex:none;flex-direction:column-reverse;width:100%;height:300px;background:#eef2f6;border-bottom:1px solid #94a3b8}} .taxonomy-segment{{width:100%;min-height:1px}} .taxonomy-sample-label{{position:absolute;top:308px;left:16px;width:115px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;transform:rotate(55deg);transform-origin:left top;color:#475467;font-size:11px}} #taxonomy-explorer-legend{{margin:8px 0 24px;min-width:0;padding-left:0}}
-.figure-scroll{{overflow-x:auto;margin:18px 0;border:1px solid var(--line);border-radius:10px;background:white}} .report-figure{{display:block;max-width:none;height:auto;margin:0}} code{{white-space:normal;word-break:break-word}} .note{{background:#eff6ff;border-left:4px solid var(--blue);padding:12px 15px;border-radius:6px;color:#344054}}
-.quality-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,430px),1fr));gap:16px;margin:18px 0}} .quality-card{{margin:0;border:1px solid var(--line);border-radius:12px;background:#fbfcfe;padding:14px;overflow-x:auto}} .quality-card figcaption{{font-weight:750;margin:0 0 8px;color:#344054}} .quality-profile{{display:block;min-width:620px;background:white;border-radius:8px}}
+/* Keep plotted images white and use parchment only for explanatory notes. */
+.figure-scroll{{overflow-x:auto;margin:18px 0;border:1px solid var(--line);border-radius:10px;background:white}} .report-figure{{display:block;max-width:none;height:auto;margin:0}} code{{white-space:normal;word-break:break-word}} .note{{background:var(--wash);border-left:4px solid var(--accent);padding:12px 15px;border-radius:6px;color:var(--ink)}}
+/* Warm the quality-profile cards without altering their plotted bands or median lines. */
+.quality-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,430px),1fr));gap:16px;margin:18px 0}} .quality-card{{margin:0;border:1px solid var(--line);border-radius:12px;background:var(--paper);padding:14px;overflow-x:auto}} .quality-card figcaption{{font-weight:750;margin:0 0 8px;color:var(--ink)}} .quality-profile{{display:block;min-width:620px;background:white;border-radius:8px}}
 details{{border:1px solid var(--line);border-radius:10px;margin:12px 0;padding:0 14px 14px}} summary{{cursor:pointer;font-weight:750;padding:14px 0}}
 @media(max-width:650px){{.taxonomy-sample-column{{width:30px}}}}
 @media print{{nav{{display:none}}body{{background:white}}section{{box-shadow:none;break-inside:avoid}}}}
 </style></head><body>
-<header><div class="eyebrow" style="color:#bfdbfe">515Y/926R amplicon workflow</div><h1>{esc(study)}</h1><p>Pipeline summary generated {esc(generated)}</p></header>
+<header>
+  <!-- Identify the pipeline separately from the user's project. -->
+  <div class="report-brand">{logo_html}<span>UniCon-IGS</span></div>
+  <!-- Preserve the workflow description. -->
+  <div class="eyebrow">515Y/926R amplicon workflow</div>
+  <!-- Keep the project name as the main heading. -->
+  <h1>{esc(project_name)}</h1>
+  <!-- Preserve the report-generation timestamp. -->
+  <p>Pipeline summary generated {esc(generated)}</p>
+</header>
 <nav><a href="#overview">Overview</a><a href="#parameters">Parameters</a><a href="#quality">DADA2</a><a href="#composition">Composition</a><a href="#taxa">Taxa</a>{'<a href="#unmerged-16s">Unmerged 16S</a>' if unmerged_summary_rows else ''}{'<a href="#internal-standards">Internal standards</a>' if interactive_internal or internal_paths else ''}</nav>
 <main>
 <section id="overview"><div class="eyebrow">Run at a glance</div><h2>Analysis overview</h2>
@@ -1537,6 +1578,8 @@ details{{border:1px solid var(--line);border-radius:10px;margin:12px 0;padding:0
 
 def run_from_snakemake(snakemake_object):
     paths = {
+        # Pass the bundled logo from Snakemake to the report renderer.
+        "logo": str(snakemake_object.input.logo),
         "samples": str(snakemake_object.input.samples),
         "split_summary": str(snakemake_object.input.split_summary),
         "stats16s": str(snakemake_object.input.stats16s),

@@ -103,7 +103,7 @@ run_case <- function(number_of_standards) {
       standard_slots = standard_slots,
       method_stems = method_stems
     ),
-    config = list(studyName = "TEST")
+    config = list(projectName = "TEST")
   )
 
   suppressMessages(source(script_path, local = globalenv()))
