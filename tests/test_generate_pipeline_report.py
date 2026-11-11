@@ -1,5 +1,7 @@
 import base64
+import csv
 import importlib.util
+import json
 import re
 import tempfile
 import unittest
@@ -13,6 +15,61 @@ SCRIPT = Path(__file__).parents[1] / "workflow" / "scripts" / "generate_pipeline
 SPEC = importlib.util.spec_from_file_location("generate_pipeline_report", SCRIPT)
 REPORT = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(REPORT)
+
+
+def render_interaction_fixture(root):
+    """Write a synthetic, offline report for Python and optional browser tests."""
+    root = Path(root)
+    root.mkdir(parents=True, exist_ok=True)
+    sample_rows = [
+        ("001", "Environmental", "-39.5", "100.5", "20.5"),
+        ("002", "Environmental", "-5.25", "2.5", "21"),
+        ("010", "Mock", "", "", ""),
+        ("020", "", "", "", ""),
+        ("030", "Environmental", "12.25", "2.05", "20.5"),
+    ]
+    paths = {}
+
+    def write_table(name, headers, rows, filename=None):
+        destination = root / (filename or f"{name}.tsv")
+        with destination.open("w", encoding="utf-8", newline="") as handle:
+            writer = csv.writer(handle, delimiter="\t", lineterminator="\n")
+            writer.writerow(headers)
+            writer.writerows(rows)
+        paths[name] = destination
+
+    write_table("samples", ("sample", "condition", "latitude", "depth", "Temperature"),
+                sample_rows, "custom-samples.tsv")
+    write_table("split_summary", ("sample", "prok_seqs_split", "euk_seqs_split"),
+                ((row[0], 1200, 300) for row in sample_rows))
+    write_table("stats16s", ("sample-id", "input", "filtered", "denoised", "merged", "non-chimeric"),
+                ((row[0], 1200, 1100, 1000, 900, 800) for row in sample_rows))
+    write_table("stats18s", ("sample-id", "input", "filtered", "denoised", "non-chimeric"),
+                ((row[0], 300, 260, 220, 180) for row in sample_rows))
+    long_rows = []
+    for sample, *_ in sample_rows:
+        for index in range(1, 41):
+            # Removing the mock reverses this taxon's abundance rank, testing colour stability.
+            abundance = 5000 if sample == "010" and index == 40 else 41 - index
+            long_rows.append((sample, f"ASV-{index}", "Bacteria", "SILVA kingdom",
+                              "", "", "", f"Taxon {index:02d}", "",
+                              "Prokaryotic_16S", abundance))
+        long_rows.append((sample, "PR2-ASV", "Eukaryota", "", "PR2 supergroup",
+                          "PR2 division", "PR2 subdivision", "", "",
+                          "Eukaryote_18S", 10))
+    write_table("long_data", ("SampleID", "ASV_hash", "Domain", "Kingdom", "Supergroup",
+                             "Division", "Subdivision", "Phylum", "ProPortal_ASV_Ecotype",
+                             "Sequence_Type", "Corrected_Sequence_Counts"), long_rows)
+    paths["cutadapt_qc"] = []
+    for sample, *_ in sample_rows:
+        path = root / f"{sample}.qc.txt"
+        path.write_text("Total read pairs processed: 2,000\n"
+                        "Pairs written (passing filters): 1,800 (90.0%)\n")
+        paths["cutadapt_qc"].append(path)
+    paths["logo"] = SCRIPT.parents[1] / "assets/unicon-logo.png"
+    output = root / "report.html"
+    REPORT.render_report({"projectName": "Report controls — synthetic fixture"}, paths, output)
+    return output
 
 
 class GeneratePipelineReportTests(unittest.TestCase):
@@ -107,6 +164,68 @@ class GeneratePipelineReportTests(unittest.TestCase):
         with mock.patch.object(REPORT, "render_report") as renderer:
             REPORT.run_from_snakemake(snakemake)
         self.assertEqual(renderer.call_args.args[1]["logo"], str(inputs["logo"]))
+
+    def test_report_tracks_the_configured_sample_sheet_not_a_hardcoded_copy(self):
+        rule = (SCRIPT.parents[1] / "rules/06-generate-report.smk").read_text()
+        self.assertIn('samples=config["samplesheet"]', rule)
+        self.assertNotIn('samples="config/samples.tsv"', rule)
+
+    def test_database_rank_labels_do_not_rename_taxonomy_or_drop_missing_values(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            rendered = render_interaction_fixture(tmp).read_text()
+        payload = re.search(r'id="taxonomy-explorer-data">(.*?)</script>', rendered, re.S)
+        data = json.loads(payload.group(1))
+        self.assertEqual(data["rankLabels"]["Phylum"], "Phylum (SILVA only)")
+        self.assertEqual(data["rankLabels"]["Kingdom"], "Kingdom (SILVA only)")
+        for rank in ("Supergroup", "Division", "Subdivision"):
+            self.assertEqual(data["rankLabels"][rank], f"{rank} (PR2 only)")
+        self.assertEqual(data["rankLabels"]["Domain"], "Domain")
+        self.assertIn("ProPortal only", data["rankLabels"]["ProPortal_ASV_Ecotype"])
+        self.assertEqual(data["samples"]["001"]["metadata"]["SampleID"], "001")
+        self.assertEqual(data["samples"]["001"]["metadata"]["Latitude"], "-39.5")
+        self.assertEqual(data["samples"]["010"]["metadata"]["Latitude"], "")
+        self.assertEqual(data["samples"]["001"]["metadata"]["Temperature"], "20.5")
+        self.assertEqual(len(data["samples"]["001"]["taxonomy"]["Phylum"]), 41)
+        self.assertEqual(data["samples"]["001"]["taxonomy"]["Phylum"]["Taxon 40"], 1)
+        self.assertEqual(data["samples"]["001"]["taxonomy"]["Phylum"]["Unassigned at Phylum"], 10)
+        self.assertEqual(sum(data["samples"]["001"]["taxonomy"]["Phylum"].values()), 830)
+        self.assertNotIn("Other", data["samples"]["001"]["taxonomy"]["Phylum"])
+
+    def test_pooled_losses_remain_visible_and_sample_tables_start_collapsed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            rendered = render_interaction_fixture(tmp).read_text()
+        quality = re.search(r'<section id="quality">(.*?)</section>', rendered, re.S).group(1)
+        bbsplit = re.search(r'<details id="bbsplit-sample-details"[^>]*>(.*?)</details>', quality, re.S)
+        dada2 = re.search(r'<details id="dada2-sample-details"[^>]*>(.*?)</details>', quality, re.S)
+        for match in (bbsplit, dada2):
+            self.assertIsNotNone(match)
+            self.assertNotIn(" open", match.group(0).split(">", 1)[0])
+        self.assertEqual(bbsplit.group(1).count("<tr>"), 6)  # Header plus five samples.
+        self.assertEqual(dada2.group(1).count("<tr>"), 11)  # Header plus two paths/sample.
+        visible = quality.replace(bbsplit.group(0), "").replace(dada2.group(0), "")
+        self.assertIn("Whole-run BBsplit summary", visible)
+        self.assertIn("Whole-run DADA2 summary", visible)
+        self.assertIn("<th>All samples</th><td>10,000</td><td>1,000 (10.0%)</td>", visible)
+        self.assertIn("1,500 (16.7%)", visible)  # BBsplit loss from 9,000 trimmed pairs.
+        self.assertIn("<td>16S paired</td><td>6,000</td>", visible)
+        self.assertIn("<td>18S concatenated</td><td>1,500</td>", visible)
+        self.assertIn("66.7%", visible)
+        self.assertIn("60.0%", visible)
+
+    def test_static_fallback_keeps_all_taxa_in_bounded_panels(self):
+        totals = REPORT.Counter({f"Taxon-{index}": index + 1 for index in range(45)})
+        self.assertEqual(REPORT.svg_top_taxa(totals).count("<rect"), 45)
+        self.assertEqual(REPORT.svg_top_taxa(totals, limit=12).count("<rect"), 12)
+        with tempfile.TemporaryDirectory() as tmp:
+            rendered = render_interaction_fixture(tmp).read_text()
+        fallback = re.search(r"<noscript>(.*?)</noscript>", rendered, re.S).group(1)
+        self.assertIn("Taxon 40", fallback)
+        self.assertIn('class="taxonomy-static-chart"', fallback)
+        self.assertIn("max-height:240px;overflow:auto", rendered)
+        self.assertIn("min-height:0;flex-shrink:0", rendered)
+        self.assertNotIn("min-height:1px", rendered)
+        self.assertNotIn("rows.slice(0, 20)", REPORT.TAXONOMY_EXPLORER_JS)
+        self.assertNotIn("rows.slice(0, palette.length)", REPORT.TAXONOMY_EXPLORER_JS)
 
     def test_qiime_environment_identity_and_name_are_in_parameter_rows(self):
         rows = dict(REPORT.flatten_config({"qiime2_environment": {

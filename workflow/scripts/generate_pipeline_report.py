@@ -26,6 +26,16 @@ TAXONOMY_RANKS = (
     "Order", "Family", "Genus", "Species", "ProPortal_ASV_Ecotype",
 )
 
+# Display database-specific rank names without changing the underlying taxonomy.
+TAXONOMY_RANK_LABELS = {
+    "Kingdom": "Kingdom (SILVA only)",  # SILVA rank in the formatted table.
+    "Phylum": "Phylum (SILVA only)",  # PR2 uses Division instead.
+    "Supergroup": "Supergroup (PR2 only)",  # PR2-specific rank.
+    "Division": "Division (PR2 only)",  # PR2-specific rank.
+    "Subdivision": "Subdivision (PR2 only)",  # PR2-specific rank.
+    "ProPortal_ASV_Ecotype": "ProPortal ASV ecotype (ProPortal only)",  # Separate annotation.
+}
+
 TAXONOMY_PLOTTING_FIELDS = (
     ("SampleID", ("sample", "sample-id", "sampleid")),
     ("Condition", ("condition", "sample condition", "sample_type", "sample type")),
@@ -40,12 +50,21 @@ TAXONOMY_EXPLORER_JS = r"""
   if (!source) return;
   const data = JSON.parse(source.textContent);
   const fieldSelect = document.getElementById("taxonomy-plot-field");
-  const valueSelect = document.getElementById("taxonomy-metadata-value");
+  // Choose filtering independently of the field used to sort the bars.
+  const filterFieldSelect = document.getElementById("taxonomy-filter-field");
+  // Hold the include/exclude checkboxes for the currently selected metadata field.
+  const filterValues = document.getElementById("taxonomy-metadata-values");
   const rankSelect = document.getElementById("taxonomy-rank");
   const summary = document.getElementById("taxonomy-filter-summary");
   const chart = document.getElementById("taxonomy-explorer-chart");
   const tableBody = document.getElementById("taxonomy-explorer-body");
   const legend = document.getElementById("taxonomy-explorer-legend");
+  // Store only restricted fields; an absent field includes every value.
+  const metadataFilters = new Map();
+  // Cache each rank's full-run taxon order so filtering never changes colours.
+  const rankTaxaCache = new Map();
+  // Retain natural ordering for identifiers such as S-2 and S-10.
+  const collator = new Intl.Collator(undefined, {numeric: true, sensitivity: "base"});
   const numberFormat = new Intl.NumberFormat();
   const palette = [
     "#332288", "#88CCEE", "#44AA99", "#117733", "#999933", "#DDCC77",
@@ -61,48 +80,125 @@ TAXONOMY_EXPLORER_JS = r"""
   }
 
   data.metadataFields.forEach(field => appendOption(fieldSelect, field, field));
+  // The same descriptive fields and SampleID are available for inclusion filters.
+  data.metadataFields.forEach(field => appendOption(filterFieldSelect, field, field));
+  // Begin with the most useful grouping field when it exists; no filter is applied.
+  if (data.metadataFields.includes("Condition")) filterFieldSelect.value = "Condition";
   data.ranks.forEach(rank => appendOption(
     rankSelect,
     rank,
-    rank === "ProPortal_ASV_Ecotype" ? "ProPortal ASV ecotype" : rank
+    // Labels explain rank provenance while option values retain the original names.
+    data.rankLabels[rank] || rank
   ));
   if (data.ranks.includes("Phylum")) rankSelect.value = "Phylum";
   else if (data.ranks.includes("Division")) rankSelect.value = "Division";
   else if (data.ranks.includes("Domain")) rankSelect.value = "Domain";
 
-  function refreshMetadataValues() {
-    const field = fieldSelect.value;
-    valueSelect.replaceChildren();
-    appendOption(valueSelect, "", "All values");
-    valueSelect.disabled = field === "SampleID";
-    if (field === "SampleID") return;
-    const values = new Set();
-    Object.values(data.samples).forEach(sample => {
-      const value = sample.metadata[field];
-      if (value !== undefined && value !== null && String(value).trim() !== "") {
-        values.add(String(value));
-      }
-    });
-    Array.from(values).sort((a, b) => a.localeCompare(b, undefined, {numeric: true}))
-      .forEach(value => appendOption(valueSelect, value, value));
+  // Keep identifier text intact and represent missing metadata as blank.
+  function metadataValue(sampleId, sample, field) {
+    // SampleID comes from the record key; other fields come from the sample sheet.
+    return field === "SampleID" ? sampleId : String(sample.metadata[field] ?? "");
   }
 
+  // Sort signed and decimal metadata numerically without converting sample IDs.
+  function compareValues(a, b, field) {
+    // Missing values remain last rather than becoming numeric zero.
+    if (!a && b) return 1;
+    if (a && !b) return -1;
+    // Only nonblank, finite metadata numbers take the numeric comparison path.
+    if (field !== "SampleID" && a && b && Number.isFinite(Number(a)) && Number.isFinite(Number(b))) {
+      // This correctly orders southern latitudes and fractional depths.
+      return Number(a) - Number(b);
+    }
+    // The final text comparison breaks ties between distinct IDs such as 001 and 1.
+    return collator.compare(a, b) || a.localeCompare(b);
+  }
+
+  // Offer every value from the complete sample sheet, including blank metadata.
+  function metadataValues(field) {
+    // Do not shrink the choices when another field excludes a sample.
+    const values = Object.entries(data.samples).map(([id, sample]) => metadataValue(id, sample, field));
+    // Remove duplicate values and present them in the same order as the bars.
+    return Array.from(new Set(values)).sort((a, b) => compareValues(a, b, field));
+  }
+
+  // Rebuild only the active field's controls; other fields retain their selections.
+  function refreshMetadataValues() {
+    // Filtering does not use the independent sorting dropdown.
+    const field = filterFieldSelect.value;
+    // Obtain choices before replacing the old controls.
+    const values = metadataValues(field);
+    // An unrestricted field starts with every checkbox selected.
+    const selected = metadataFilters.get(field) || new Set(values);
+    // Replace the visible list without resetting stored filters.
+    filterValues.replaceChildren();
+    // Give the checkbox group a meaningful screen-reader label.
+    filterValues.setAttribute("aria-label", `Include ${field || "metadata"} values`);
+    // Use text nodes rather than HTML so user metadata is never executed.
+    values.forEach(value => {
+      // Wrap each checkbox and its text in a clickable label.
+      const label = document.createElement("label");
+      // Create one include/exclude control per distinct value.
+      const checkbox = document.createElement("input");
+      // Native checkboxes support keyboard and mouse operation.
+      checkbox.type = "checkbox";
+      // Preserve the exact string, including an empty string for missing metadata.
+      checkbox.value = value;
+      // Restore the previous selection when returning to a field.
+      checkbox.checked = selected.has(value);
+      // Change only this field's filter when its checkbox is toggled.
+      checkbox.addEventListener("change", () => {
+        // Copy the current choices so the displayed list and filter stay consistent.
+        const allowed = new Set(metadataFilters.get(field) || values);
+        // Include checked values and exclude unchecked ones.
+        if (checkbox.checked) allowed.add(value); else allowed.delete(value);
+        // Selecting every value removes the restriction; none deliberately matches nothing.
+        if (allowed.size === values.length) metadataFilters.delete(field); else metadataFilters.set(field, allowed);
+        // Redraw the chart, legend and taxonomy table using the updated sample set.
+        render();
+      });
+      // Make blank metadata visible instead of silently omitting those samples.
+      label.append(checkbox, document.createTextNode(value || "(blank)"));
+      // Add the completed checkbox to the scrollable choices.
+      filterValues.appendChild(label);
+    });
+  }
+
+  // Keep samples matching every active filter; selected values within a field are alternatives.
+  function matchesFilters([sampleId, sample]) {
+    // An empty selection deliberately excludes all samples.
+    return Array.from(metadataFilters).every(([field, values]) =>
+      values.has(metadataValue(sampleId, sample, field))
+    );
+  }
+
+  // Filter the sample set first, then order its bars without changing any counts.
   function selectedSamples() {
+    // Read only the sorting setting here; filtering has independent controls.
     const field = fieldSelect.value;
-    const value = valueSelect.value;
-    const selected = Object.entries(data.samples).filter(([, sample]) => {
-      if (field === "SampleID" || !value) return true;
-      return String(sample.metadata[field] ?? "") === value;
-    });
-    const collator = new Intl.Collator(undefined, {numeric: true, sensitivity: "base"});
-    return selected.sort((a, b) => {
-      const aValue = field === "SampleID" ? a[0] : String(a[1].metadata[field] ?? "");
-      const bValue = field === "SampleID" ? b[0] : String(b[1].metadata[field] ?? "");
-      if (!aValue && bValue) return 1;
-      if (aValue && !bValue) return -1;
-      const comparison = collator.compare(aValue, bValue);
-      return comparison || collator.compare(a[0], b[0]);
-    });
+    // All samples remain eligible until the user explicitly restricts a field.
+    const selected = Object.entries(data.samples).filter(matchesFilters);
+    // Resolve equal metadata values by SampleID for reproducible bar order.
+    return selected.sort((a, b) => compareValues(metadataValue(a[0], a[1], field), metadataValue(b[0], b[1], field), field)
+      || compareValues(a[0], b[0], "SampleID"));
+  }
+
+  // Establish one taxon order per rank from the entire run, not a filtered view.
+  function fullRunTaxa(rank) {
+    // Reuse the same order on subsequent filter or sorting changes.
+    if (!rankTaxaCache.has(rank)) {
+      // Sum abundances only to determine a stable, abundance-first display order.
+      const totals = new Map();
+      // Include every sample so hiding mocks cannot change a taxon's colour.
+      Object.values(data.samples).forEach(sample => Object.entries(sample.taxonomy[rank] || {}).forEach(([taxon, abundance]) => {
+        // Keep only positive observations, as in the existing explorer.
+        if (Number(abundance) > 0) totals.set(taxon, (totals.get(taxon) || 0) + Number(abundance));
+      }));
+      // Break equal-abundance ties deterministically by the taxon label.
+      rankTaxaCache.set(rank, Array.from(totals).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([taxon]) => taxon));
+    }
+    // Return the complete list without grouping rare taxa into Other.
+    return rankTaxaCache.get(rank);
   }
 
   function render() {
@@ -121,15 +217,18 @@ TAXONOMY_EXPLORER_JS = r"""
     });
     const rows = Array.from(totals.entries()).sort((a, b) => b[1] - a[1]);
     const grandTotal = Array.from(totals.values()).reduce((sum, value) => sum + value, 0);
-    const displayedTaxa = rows.slice(0, palette.length).map(([taxon]) => taxon);
-    const displayedSet = new Set(displayedTaxa);
-    const hasOther = rows.some(([taxon]) => !displayedSet.has(taxon));
-    const legendTaxa = hasOther ? [...displayedTaxa, "Other"] : displayedTaxa;
+    // Assign colours from the full run, not the currently filtered samples.
+    const rankTaxa = fullRunTaxa(rank);
+    // Cycle through the existing accessible palette when it is exhausted.
+    const colorByTaxon = new Map(rankTaxa.map((taxon, index) => [taxon, palette[index % palette.length]]));
+    // Preserve stack order as well as colours when samples are hidden.
+    const orderByTaxon = new Map(rankTaxa.map((taxon, index) => [taxon, index]));
 
     const field = fieldSelect.value;
-    const value = valueSelect.value;
-    const filterText = field !== "SampleID" && value ? `${field} = ${value}` : "all samples";
-    summary.textContent = `${selected.length} sample(s) included · ordered by ${field} · ${filterText} · ${rank}`;
+    // Describe all active filters, including restrictions retained on other fields.
+    const filterText = metadataFilters.size ? `${metadataFilters.size} active filter(s): ${Array.from(metadataFilters.keys()).join(", ")}` : "all samples";
+    // State that this interaction affects the taxonomy view, not whole-run QC totals.
+    summary.textContent = `${selected.length} of ${Object.keys(data.samples).length} sample(s) included · ordered by ${field} · ${filterText} · ${data.rankLabels[rank] || rank || "no taxonomy ranks"} · ${rows.length} taxa`;
 
     chart.replaceChildren();
     legend.replaceChildren();
@@ -149,36 +248,33 @@ TAXONOMY_EXPLORER_JS = r"""
       const total = Object.values(counts).reduce((sum, abundance) => sum + (Number(abundance) || 0), 0);
       const column = document.createElement("div");
       column.className = "taxonomy-sample-column";
+      // Keep a readable sample identity available to users and UI regression tests.
+      column.dataset.sampleId = sampleId;
+      // Include available descriptive metadata in hover text, preserving blank values.
+      const metadataText = data.metadataFields.filter(name => name !== "SampleID")
+        .map(name => `${name}: ${metadataValue(sampleId, sample, name) || "(blank)"}`).join("\n");
       const bar = document.createElement("div");
       bar.className = "taxonomy-stacked-bar";
-      displayedTaxa.forEach((taxon, index) => {
-        const abundance = Number(counts[taxon]) || 0;
+      // Draw every observed taxon in stable full-run order, including rare taxa.
+      Object.entries(counts).sort((a, b) => orderByTaxon.get(a[0]) - orderByTaxon.get(b[0])).forEach(([taxon, value]) => {
+        // Counts and the per-sample denominator are unchanged by display filtering.
+        const abundance = Number(value) || 0;
         if (abundance <= 0 || total <= 0) return;
         const segment = document.createElement("div");
         segment.className = "taxonomy-segment";
         segment.style.height = `${100 * abundance / total}%`;
-        segment.style.background = palette[index % palette.length];
-        segment.title = `${sampleId} — ${taxon}: ${(100 * abundance / total).toFixed(2)}% (${numberFormat.format(Math.round(abundance))})`;
+        // Use the same taxon colour in bars and the legend across every sample selection.
+        segment.style.background = colorByTaxon.get(taxon);
+        // Identify the taxon and rank, correctly scaled percentage, count and sample metadata.
+        segment.title = `${sampleId} — ${rank}: ${taxon}: ${(100 * abundance / total).toFixed(2)}% (${numberFormat.format(Math.round(abundance))})\n${metadataText}`;
         bar.appendChild(segment);
       });
-      if (hasOther && total > 0) {
-        const other = Object.entries(counts)
-          .filter(([taxon]) => !displayedSet.has(taxon))
-          .reduce((sum, [, abundance]) => sum + (Number(abundance) || 0), 0);
-        if (other > 0) {
-          const segment = document.createElement("div");
-          segment.className = "taxonomy-segment";
-          segment.style.height = `${100 * other / total}%`;
-          segment.style.background = "#94a3b8";
-          segment.title = `${sampleId} — Other: ${(100 * other / total).toFixed(2)}% (${numberFormat.format(Math.round(other))})`;
-          bar.appendChild(segment);
-        }
-      }
       const label = document.createElement("div");
       label.className = "taxonomy-sample-label";
-      const plotValue = field === "SampleID" ? sampleId : String(sample.metadata[field] ?? "");
-      label.textContent = plotValue || sampleId;
-      label.title = field === "SampleID" ? sampleId : `${sampleId} — ${field}: ${plotValue || "blank"}`;
+      // Sorting by metadata must not replace the sample identifier beneath its bar.
+      label.textContent = sampleId;
+      // Expose every descriptive field when hovering over a sample label.
+      label.title = `${sampleId}\n${metadataText}`;
       column.append(bar, label);
       plot.appendChild(column);
     });
@@ -195,17 +291,20 @@ TAXONOMY_EXPLORER_JS = r"""
     scroller.appendChild(plot);
     chart.append(axis, scroller);
 
-    legendTaxa.forEach((taxon, index) => {
+    // Show every positive-abundance taxon in the selected samples; colours can repeat.
+    rows.forEach(([taxon]) => {
       const item = document.createElement("span");
       item.className = "legend-item";
       const swatch = document.createElement("span");
       swatch.className = "legend-swatch";
-      swatch.style.background = taxon === "Other" ? "#94a3b8" : palette[index % palette.length];
+      // Keep legend swatches consistent with their plotted segments.
+      swatch.style.background = colorByTaxon.get(taxon);
       item.append(swatch, document.createTextNode(taxon));
       legend.appendChild(item);
     });
 
-    rows.slice(0, 20).forEach(([taxon, abundance], index) => {
+    // Print every observed taxon without the former top-20 cutoff.
+    rows.forEach(([taxon, abundance], index) => {
       const tr = document.createElement("tr");
       const values = [
         index + 1,
@@ -223,12 +322,39 @@ TAXONOMY_EXPLORER_JS = r"""
     });
   }
 
-  fieldSelect.addEventListener("change", () => {
+  // Sorting and taxonomy changes retain every active metadata filter.
+  fieldSelect.addEventListener("change", render);
+  rankSelect.addEventListener("change", render);
+  // Switching the displayed filter field restores its checkboxes without clearing others.
+  filterFieldSelect.addEventListener("change", refreshMetadataValues);
+  // Include every value of the displayed field without resetting other fields.
+  document.getElementById("taxonomy-filter-all").addEventListener("click", () => {
+    // Removing a restriction represents all values, including blanks.
+    metadataFilters.delete(filterFieldSelect.value);
+    // Synchronize the checkboxes with the updated inclusion state.
     refreshMetadataValues();
+    // Recalculate the visible samples and descriptive taxonomy summary.
     render();
   });
-  valueSelect.addEventListener("change", render);
-  rankSelect.addEventListener("change", render);
+  // Start from no included values when the user wants to select only a few.
+  document.getElementById("taxonomy-filter-none").addEventListener("click", () => {
+    // An empty set explicitly excludes every value of the displayed field.
+    metadataFilters.set(filterFieldSelect.value, new Set());
+    // Reflect the empty selection in the visible checkboxes.
+    refreshMetadataValues();
+    // Show the empty-state explanation rather than silently restoring samples.
+    render();
+  });
+  // Provide one action to restore the complete, unfiltered run.
+  document.getElementById("taxonomy-filter-reset").addEventListener("click", () => {
+    // Discard only browser display restrictions; source tables are untouched.
+    metadataFilters.clear();
+    // Restore all checkboxes in the currently displayed field.
+    refreshMetadataValues();
+    // Redraw every sample with its original counts and colours.
+    render();
+  });
+  // Initially show every sample and mark every available metadata value as included.
   refreshMetadataValues();
   render();
 })();
@@ -555,7 +681,8 @@ def svg_composition(sample_totals, title):
     )
 
 
-def svg_top_taxa(taxa_totals, limit=12):
+def svg_top_taxa(taxa_totals, limit=None):
+    # The no-JavaScript fallback also retains all taxa unless a caller requests a limit.
     data = taxa_totals.most_common(limit)
     width, height = 900, max(260, 46 * len(data) + 50)
     left, right = 220, 90
@@ -987,7 +1114,13 @@ def build_taxonomy_explorer_data(sample_rows, long_rows, abundance_column):
                 for rank in ranks
             },
         }
-    return {"metadataFields": metadata_fields, "ranks": ranks, "samples": samples}
+    return {
+        "metadataFields": metadata_fields,
+        "ranks": ranks,
+        # Add readable provenance labels without renaming the stored taxonomy keys.
+        "rankLabels": {rank: TAXONOMY_RANK_LABELS.get(rank, rank) for rank in ranks},
+        "samples": samples,
+    }
 
 
 def sequence_assignment(row):
@@ -1068,6 +1201,17 @@ def pre_dada2_loss_cells(raw, retained, split_counts):
         f"<td>{fmt_count(split_counts.get('prok'))}</td>"
         f"<td>{fmt_count(split_counts.get('euk'))}</td>"
         f"<td>{fmt_count(assigned)}</td>"
+    )
+
+
+# Reuse identical table headings for pooled and per-sample read-loss displays.
+def read_flow_table(headers, rows):
+    # Escape heading text while retaining the existing, already-formatted cell HTML.
+    headings = "".join(f"<th>{esc(label)}</th>" for label in headers)
+    # Keep wide tables horizontally scrollable on small screens.
+    return (
+        '<div class="table-wrap"><table><thead><tr>'
+        f'{headings}</tr></thead><tbody>{rows}</tbody></table></div>'
     )
 
 
@@ -1415,6 +1559,25 @@ def render_report(config, paths, output_path):
         f"{pre_dada2_loss_cells(aggregate_raw, aggregate_retained, aggregate_split)}</tr>"
     )
 
+    # The pooled BBsplit row remains visible; sample rows use the same columns below.
+    pre_dada2_headers = (
+        "Sample", "Raw pairs", "Primer-trimming loss", "Pairs entering BBsplit",
+        "BBsplit unassigned", "Assigned 16S", "Assigned 18S", "Total assigned",
+    )
+    # Keep the 16S and 18S paths separate because only canonical 16S uses pair merging.
+    dada2_headers = (
+        "Path", "DADA2 input", "Filtering loss", "Denoising loss", "Pair-merging loss",
+        "Chimera-removal loss", "Final reads", "Total retention",
+    )
+    # Use existing values and denominators; this change affects presentation only.
+    pre_dada2_summary_table = read_flow_table(pre_dada2_headers, pre_dada2_summary_row)
+    # Put per-sample BBsplit detail in its own collapsed disclosure panel.
+    pre_dada2_sample_table = read_flow_table(pre_dada2_headers, "".join(pre_dada2_rows))
+    # Preserve the visible two-row DADA2 summary of the complete run.
+    dada2_summary_table = read_flow_table(dada2_headers, dada2_summary_rows)
+    # Add Sample before Path only in the per-sample DADA2 table.
+    dada2_sample_table = read_flow_table(("Sample",) + dada2_headers, "".join(dada2_sample_rows))
+
     parameter_rows = "".join(
         f"<tr><th>{esc(key)}</th><td><code>{esc(value)}</code></td></tr>"
         for key, value in flatten_config(config)
@@ -1426,7 +1589,8 @@ def render_report(config, paths, output_path):
     )
     top_taxa_rows = "".join(
         f"<tr><td>{index}</td><td>{esc(taxon)}</td><td>{fmt_count(value)}</td><td>{len(taxa_samples[taxon])}</td></tr>"
-        for index, (taxon, value) in enumerate(taxa_totals.most_common(20), 1)
+        # Retain every taxon in the no-JavaScript table rather than only the top 20.
+        for index, (taxon, value) in enumerate(taxa_totals.most_common(), 1)
     )
     assignment_order = [
         "Prokaryotic 16S",
@@ -1535,12 +1699,32 @@ h2{{font-size:25px;margin:.1em 0 .35em}} h3{{margin-top:28px}} .eyebrow{{color:v
 .pill{{display:inline-block;padding:3px 8px;border-radius:99px;font-size:12px;font-weight:750}} .pill.good{{background:#dbeafe;color:#1e40af}} .pill.warn{{background:#fef3c7;color:#92400e}} .pill.bad{{background:#fce7f3;color:#9d174d}} .pill.neutral{{background:#e2e8f0;color:#475569}}
 .svg-label{{fill:#475467;font-size:12px}} .svg-total{{fill:#344054;font-size:12px;font-weight:700}} .grid{{stroke:#e4e7ec;stroke-width:1}} .axis-tick{{stroke:#94a3b8;stroke-width:1}} svg{{max-width:100%;height:auto}} .frozen-chart{{display:grid;grid-template-columns:78px minmax(0,1fr);align-items:start;margin:18px 0;border:1px solid var(--line);border-radius:10px;background:white;overflow:hidden}} .frozen-y-axis{{display:block;max-width:none;background:white;border-right:1px solid var(--line);z-index:1}} .chart-scroll{{overflow-x:auto;min-width:0}} .scroll-chart-svg{{display:block;max-width:none;height:auto}}
 .chart-legend{{display:flex;flex-wrap:wrap;gap:10px 22px;align-items:center;padding:12px 10px 2px;min-width:max-content}} .legend-item{{display:inline-flex;align-items:center;gap:7px;color:#475467;font-size:12px;font-weight:650}} .legend-swatch{{display:inline-block;width:12px;height:12px;border-radius:2px;flex:none}}
-.explorer-controls{{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:14px;margin:22px 0 12px}} .explorer-control label{{display:block;margin-bottom:5px;color:#344054;font-size:13px;font-weight:750}} .explorer-control select{{width:100%;padding:10px 12px;border:1px solid #cbd5e1;border-radius:8px;background:white;color:var(--ink);font:inherit}} .explorer-control select:disabled{{background:#f1f5f9;color:#94a3b8}} .small-muted{{color:var(--muted);font-size:13px}} .taxonomy-chart{{display:grid;grid-template-columns:54px minmax(0,1fr);margin:20px 0 8px;border:1px solid var(--line);border-radius:10px;background:white;overflow:hidden}} .taxonomy-y-axis{{position:relative;height:450px;border-right:1px solid var(--line);background:white;z-index:1}} .taxonomy-y-axis span{{position:absolute;right:8px;transform:translateY(-50%);color:#475467;font-size:12px}} .taxonomy-scroll{{overflow-x:auto;min-width:0;padding:20px 18px;background:repeating-linear-gradient(to bottom,#fff 0,#fff 74px,#e4e7ec 75px)}} .taxonomy-stacked-plot{{display:flex;align-items:flex-start;gap:5px;height:410px;min-width:max-content}} .taxonomy-sample-column{{position:relative;display:flex;flex-direction:column;justify-content:flex-start;width:34px;height:400px}} .taxonomy-stacked-bar{{display:flex;flex:none;flex-direction:column-reverse;width:100%;height:300px;background:#eef2f6;border-bottom:1px solid #94a3b8}} .taxonomy-segment{{width:100%;min-height:1px}} .taxonomy-sample-label{{position:absolute;top:308px;left:16px;width:115px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;transform:rotate(55deg);transform-origin:left top;color:#475467;font-size:11px}} #taxonomy-explorer-legend{{margin:8px 0 24px;min-width:0;padding-left:0}}
+.explorer-controls{{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:14px;margin:22px 0 12px}} .explorer-control label{{display:block;margin-bottom:5px;color:#344054;font-size:13px;font-weight:750}} .explorer-control select{{width:100%;padding:10px 12px;border:1px solid #cbd5e1;border-radius:8px;background:white;color:var(--ink);font:inherit}} .explorer-control select:disabled{{background:#f1f5f9;color:#94a3b8}} .small-muted{{color:var(--muted);font-size:13px}} .taxonomy-chart{{display:grid;grid-template-columns:54px minmax(0,1fr);margin:20px 0 8px;border:1px solid var(--line);border-radius:10px;background:white;overflow:hidden}} .taxonomy-y-axis{{position:relative;height:450px;border-right:1px solid var(--line);background:white;z-index:1}} .taxonomy-y-axis span{{position:absolute;right:8px;transform:translateY(-50%);color:#475467;font-size:12px}} .taxonomy-scroll{{overflow-x:auto;min-width:0;padding:20px 18px;background:repeating-linear-gradient(to bottom,#fff 0,#fff 74px,#e4e7ec 75px)}} .taxonomy-stacked-plot{{display:flex;align-items:flex-start;gap:5px;height:410px;min-width:max-content}} .taxonomy-sample-column{{position:relative;display:flex;flex-direction:column;justify-content:flex-start;width:34px;height:400px}} .taxonomy-stacked-bar{{display:flex;flex:none;flex-direction:column-reverse;width:100%;height:300px;background:#eef2f6;border-bottom:1px solid #94a3b8}} .taxonomy-segment{{width:100%}} .taxonomy-sample-label{{position:absolute;top:308px;left:16px;width:115px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;transform:rotate(55deg);transform-origin:left top;color:#475467;font-size:11px}} #taxonomy-explorer-legend{{margin:8px 0 24px;min-width:0;padding-left:0}}
 /* Keep plotted images white and use parchment only for explanatory notes. */
 .figure-scroll{{overflow-x:auto;margin:18px 0;border:1px solid var(--line);border-radius:10px;background:white}} .report-figure{{display:block;max-width:none;height:auto;margin:0}} code{{white-space:normal;word-break:break-word}} .note{{background:var(--wash);border-left:4px solid var(--accent);padding:12px 15px;border-radius:6px;color:var(--ink)}}
 /* Warm the quality-profile cards without altering their plotted bands or median lines. */
 .quality-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,430px),1fr));gap:16px;margin:18px 0}} .quality-card{{margin:0;border:1px solid var(--line);border-radius:12px;background:var(--paper);padding:14px;overflow-x:auto}} .quality-card figcaption{{font-weight:750;margin:0 0 8px;color:var(--ink)}} .quality-profile{{display:block;min-width:620px;background:white;border-radius:8px}}
 details{{border:1px solid var(--line);border-radius:10px;margin:12px 0;padding:0 14px 14px}} summary{{cursor:pointer;font-weight:750;padding:14px 0}}
+/* Keep filter actions separate from bar sorting and usable on narrow screens. */
+.taxonomy-filter-actions{{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0}}
+/* Use native buttons with sufficient contrast and a comfortable click target. */
+.taxonomy-filter-actions button{{font:inherit;padding:8px 12px;border:1px solid var(--line);border-radius:6px;background:var(--wash);color:var(--ink);cursor:pointer}}
+/* Bound long sample or metadata lists without hiding blank-value choices. */
+.taxonomy-metadata-values{{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr));gap:8px;max-height:220px;overflow:auto;padding:10px;border:1px solid var(--line);border-radius:8px}}
+/* Keep the checkbox beside a wrapping metadata label rather than over the text. */
+.taxonomy-metadata-values label{{display:flex;align-items:flex-start;gap:8px;overflow-wrap:anywhere}}
+/* Native checkbox sizing must not inherit the full width used by dropdowns. */
+.taxonomy-metadata-values input{{flex:none;margin-top:5px}}
+/* Rare taxa must keep their actual fractional heights, not a one-pixel minimum. */
+.taxonomy-segment{{min-height:0;flex-shrink:0}}
+/* Include the full key while limiting its height, as in a QIIME-style legend. */
+#taxonomy-explorer-legend{{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,240px),1fr));align-items:start;max-height:240px;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:12px}}
+/* Long lineage names wrap inside the legend instead of widening the page. */
+#taxonomy-explorer-legend .legend-item{{min-width:0;align-items:flex-start;overflow-wrap:anywhere}}
+/* Keep the complete taxon table and static fallback in bounded scrolling panels. */
+.taxonomy-table,.taxonomy-static-chart{{max-height:360px;overflow:auto}}
+/* Retain column labels while scrolling through many taxa. */
+.taxonomy-table thead th{{position:sticky;top:0;z-index:1}}
 @media(max-width:650px){{.taxonomy-sample-column{{width:30px}}}}
 @media print{{nav{{display:none}}body{{background:white}}section{{box-shadow:none;break-inside:avoid}}}}
 </style></head><body>
@@ -1565,9 +1749,79 @@ details{{border:1px solid var(--line);border-radius:10px;margin:12px 0;padding:0
 <h3>{species_heading}</h3>{species_description}{species_assignment_html}
 <h3>PR2 plastid cross-check</h3><p>Every unique 16S ASV was independently classified with PR2. PR2 replaces SILVA only when the PR2 lineage contains the explicit <code>:plas</code> marker and meets the configured confidence threshold. This can rescue chloroplast ASVs that the selected SILVA classifier placed among bacteria while preserving SILVA for all non-plastid calls. The complete per-ASV decision table is included in Results-Export.</p>{chloroplast_resolution_html}
 <h3>Effective DADA2 settings used</h3><p>This table records the values actually applied by the pipeline. For an older config without a <code>dada2</code> block, the workflow defaults are shown.</p><div class="table-wrap"><table><thead><tr><th>Path</th><th>Parameter</th><th>Value</th><th>What it controls</th></tr></thead><tbody>{dada2_parameter_rows}</tbody></table></div><h3>Complete configuration</h3><div class="table-wrap"><table><tbody>{parameter_rows}</tbody></table></div></section>
-<section id="quality"><div class="eyebrow">Read processing and DADA2</div><h2>Reads before filtering and quality control</h2><p>These are raw paired-end records reported by Cutadapt before primer removal or other pipeline filtering. One read pair is counted once so it remains comparable with the amplicon counts retained after DADA2.</p>{raw_reads_chart}<h2>Primer trimming and BBsplit assignment</h2><p>Primer-trimming loss counts read pairs discarded by Cutadapt before BBsplit, primarily because the required primers were not detected. BBsplit loss counts the trimmed read pairs that were not assigned to either the 16S or 18S reference bin. Each percentage is calculated from the immediately preceding stage.</p><div class="table-wrap"><table><thead><tr><th>Sample</th><th>Raw pairs</th><th>Primer-trimming loss</th><th>Pairs entering BBsplit</th><th>BBsplit unassigned</th><th>Assigned 16S</th><th>Assigned 18S</th><th>Total assigned</th></tr></thead><tbody>{pre_dada2_summary_row}{''.join(pre_dada2_rows)}</tbody></table></div><h2>QIIME 2 sequence-quality profiles</h2><p>These profiles are reconstructed directly from the seven-number summaries stored in the QIIME 2 <code>demux summarize</code> visualizations. The dark line is the median quality score at each base, the darker band spans the 25th–75th percentiles, and the lighter band spans the 9th–91st percentiles. The paired 18S plots show reads before length trimming and concatenation; the final 18S plot shows the concatenated reads supplied to DADA2.</p>{quality_profiles}<h2>Where reads were lost in DADA2</h2><p>Each loss is shown as a read count and the percentage lost from the immediately preceding stage. Filtering covers DADA2 quality filtering and truncation; denoising applies the learned error model; pair merging applies only to paired 16S reads; and the final loss is chimera removal. The 18S reads were concatenated before entering single-end DADA2, so pair merging is not applicable to that path.</p><div class="table-wrap"><table><thead><tr><th>Path</th><th>DADA2 input</th><th>Filtering loss</th><th>Denoising loss</th><th>Pair-merging loss</th><th>Chimera-removal loss</th><th>Final reads</th><th>Total retention</th></tr></thead><tbody>{dada2_summary_rows}</tbody></table></div><h3>DADA2 losses by sample</h3><p>Use this table to identify whether an individual sample loses most reads during filtering, denoising, paired-read merging, or chimera removal. Values below 40% total retention are highlighted for review; these thresholds are guides rather than automatic pass/fail criteria.</p><div class="table-wrap"><table><thead><tr><th>Sample</th><th>Path</th><th>DADA2 input</th><th>Filtering loss</th><th>Denoising loss</th><th>Pair-merging loss</th><th>Chimera-removal loss</th><th>Final reads</th><th>Total retention</th></tr></thead><tbody>{''.join(dada2_sample_rows)}</tbody></table></div><h2>Reads retained after DADA2</h2><p>Each bar is the sample's combined non-chimeric 16S and 18S abundance after DADA2 filtering, denoising, 16S pair merging, and chimera removal.</p>{post_dada2_chart}</section>
+<section id="quality">
+  <div class="eyebrow">Read processing and DADA2</div>
+  <h2>Reads before filtering and quality control</h2>
+  <p>These are raw paired-end records reported by Cutadapt before primer removal or other pipeline filtering. One read pair is counted once so it remains comparable with the amplicon counts retained after DADA2.</p>
+  {raw_reads_chart}
+  <h2>Primer trimming and BBsplit assignment</h2>
+  <p>Primer-trimming loss counts read pairs discarded by Cutadapt before BBsplit, primarily because the required primers were not detected. BBsplit loss counts the trimmed read pairs that were not assigned to either the 16S or 18S reference bin. Each percentage is calculated from the immediately preceding stage.</p>
+  <!-- Keep the pooled run summary visible without expanding sample details. -->
+  <h3>Whole-run BBsplit summary</h3>
+  <p>Counts are summed across samples. Percentages use the pooled stage counts, not the average of sample percentages.</p>
+  {pre_dada2_summary_table}
+  <!-- Omit open so the unchanged per-sample values start collapsed. -->
+  <details id="bbsplit-sample-details" class="sample-details">
+    <summary>Show BBsplit results by sample</summary>
+    {pre_dada2_sample_table}
+  </details>
+  <h2>QIIME 2 sequence-quality profiles</h2>
+  <p>These profiles are reconstructed directly from the seven-number summaries stored in the QIIME 2 <code>demux summarize</code> visualizations. The dark line is the median quality score at each base, the darker band spans the 25th–75th percentiles, and the lighter band spans the 9th–91st percentiles. The paired 18S plots show reads before length trimming and concatenation; the final 18S plot shows the concatenated reads supplied to DADA2.</p>
+  {quality_profiles}
+  <h2>Where reads were lost in DADA2</h2>
+  <p>Each loss is shown as a read count and the percentage lost from the immediately preceding stage. Filtering covers DADA2 quality filtering and truncation; denoising applies the learned error model; pair merging applies only to paired 16S reads; and the final loss is chimera removal. The 18S reads were concatenated before entering single-end DADA2, so pair merging is not applicable to that path.</p>
+  <!-- Preserve separate pooled summaries for paired 16S and concatenated 18S. -->
+  <h3>Whole-run DADA2 summary</h3>
+  <p>Counts are summed within each path. Percentages are calculated from these pooled counts.</p>
+  {dada2_summary_table}
+  <!-- Keep sample-level DADA2 diagnostics available without a long default table. -->
+  <details id="dada2-sample-details" class="sample-details">
+    <summary>Show DADA2 losses by sample</summary>
+    <p>Use this table to identify whether an individual sample loses most reads during filtering, denoising, paired-read merging, or chimera removal. Values below 40% total retention are highlighted for review; these thresholds are guides rather than automatic pass/fail criteria.</p>
+    {dada2_sample_table}
+  </details>
+  <h2>Reads retained after DADA2</h2>
+  <p>Each bar is the sample's combined non-chimeric 16S and 18S abundance after DADA2 filtering, denoising, 16S pair merging, and chimera removal.</p>
+  {post_dada2_chart}
+</section>
 <section id="composition"><div class="eyebrow">Basic bar plots</div><h2>Domain composition by sample</h2><p>Bars show relative abundance from <code>{esc(abundance_column)}</code>. Hover over a segment for its value.</p>{domain_chart}<h3>Sequence assignments</h3><p>This breakdown uses the pipeline's <code>Sequence_Type</code> field and taxonomy labels. The broad 16S total includes prokaryotic, chloroplast, and mitochondrial 16S. The figure itself uses mutually exclusive categories, so each sequence count appears in only one bar.</p><div class="cards"><div class="card"><strong>{fmt_count(total_16s)}</strong><span>total 16S</span></div><div class="card"><strong>{fmt_count(assignment_totals['Eukaryotic 18S'])}</strong><span>eukaryotic 18S</span></div><div class="card"><strong>{fmt_count(assignment_totals['Chloroplast 16S'])}</strong><span>chloroplast 16S</span></div><div class="card"><strong>{fmt_count(assignment_totals['Mitochondrial 16S'])}</strong><span>mitochondrial 16S</span></div><div class="card"><strong>{fmt_count(assignment_totals['Unassigned'])}</strong><span>unassigned</span></div></div>{assignment_chart}<h3>Sequence-assignment counts</h3><div class="table-wrap"><table><thead><tr><th>Assignment</th><th>Sequence abundance</th><th>Share of all assignments</th></tr></thead><tbody>{assignment_rows}</tbody></table></div><p class="note"><strong>Total 16S</strong> is a summary row and overlaps its three 16S subcategories; the remaining rows and the figure are mutually exclusive.</p></section>
-<section id="taxa"><div class="eyebrow">Taxonomic summary</div><h2>Interactive taxonomy bar plot</h2><p>This QIIME 2-style view shows each sample as a 100% stacked bar. Choose a taxonomy level, then order the bars by SampleID, Condition, Latitude, Longitude, or Depth. When a metadata variable is selected, you can optionally display only one value. Counts use <code>{esc(abundance_column)}</code>; hover over a colored segment for its taxon, relative abundance, and count.</p><div class="explorer-controls"><div class="explorer-control"><label for="taxonomy-rank">Taxonomy level</label><select id="taxonomy-rank"></select></div><div class="explorer-control"><label for="taxonomy-plot-field">Plot samples by</label><select id="taxonomy-plot-field"></select></div><div class="explorer-control"><label for="taxonomy-metadata-value">Filter plotted value</label><select id="taxonomy-metadata-value"></select></div></div><p id="taxonomy-filter-summary" class="small-muted" aria-live="polite"></p><div id="taxonomy-explorer-chart" class="taxonomy-chart" aria-label="Interactive relative taxonomic abundance by sample"></div><div id="taxonomy-explorer-legend" class="chart-legend" aria-label="Taxonomy legend"></div><h3>Top taxa table</h3><div class="table-wrap"><table><thead><tr><th>#</th><th>Taxon</th><th>Total abundance</th><th>Relative abundance</th><th>Samples detected</th></tr></thead><tbody id="taxonomy-explorer-body"></tbody></table></div><noscript><p class="note">Interactive controls require JavaScript. This static summary uses all samples and the first informative SILVA or PR2 rank.</p>{taxa_chart}<div class="table-wrap"><table><thead><tr><th>#</th><th>Taxon</th><th>Total abundance</th><th>Samples detected</th></tr></thead><tbody>{top_taxa_rows}</tbody></table></div></noscript></section>
+<section id="taxa">
+  <div class="eyebrow">Taxonomic summary</div><h2>Interactive taxonomy bar plot</h2>
+  <p>This QIIME 2-style view shows each sample as a 100% stacked bar. Choose a taxonomy level, then sort by SampleID or available sample-sheet metadata such as Condition, Latitude, Longitude or Depth. Counts use <code>{esc(abundance_column)}</code>; hover over a segment for its taxon, rank, relative abundance, count and sample metadata.</p>
+  <!-- Changing sort order never changes the separately stored sample filters. -->
+  <div class="explorer-controls">
+    <div class="explorer-control"><label for="taxonomy-rank">Taxonomy level</label><select id="taxonomy-rank"></select></div>
+    <div class="explorer-control"><label for="taxonomy-plot-field">Sort samples by</label><select id="taxonomy-plot-field"></select></div>
+  </div>
+  <!-- Native disclosure controls keep potentially large metadata lists compact. -->
+  <details id="taxonomy-sample-filters">
+    <summary>Choose samples and metadata filters</summary>
+    <p>All samples start included. Choose a field and uncheck values to hide them, for example Mock under Condition. Choose SampleID to include or exclude individual samples. Selections persist when you switch fields. Samples must match every active field; checked values within a field are alternatives. Blank metadata is a selectable value.</p>
+    <div class="explorer-control"><label for="taxonomy-filter-field">Filter field</label><select id="taxonomy-filter-field"></select></div>
+    <div class="taxonomy-filter-actions">
+      <!-- Select-all affects only the currently displayed field. -->
+      <button type="button" id="taxonomy-filter-all">Select all values</button>
+      <!-- Select-none makes it easy to include just one or two values afterwards. -->
+      <button type="button" id="taxonomy-filter-none">Clear all values</button>
+      <!-- Reset removes restrictions on every field without changing source data. -->
+      <button type="button" id="taxonomy-filter-reset">Reset all filters</button>
+    </div>
+    <div id="taxonomy-metadata-values" class="taxonomy-metadata-values" role="group" aria-label="Metadata values to include"></div>
+  </details>
+  <!-- Explain structural missing ranks instead of implying classification failure. -->
+  <p class="small-muted">Kingdom and Phylum are SILVA ranks; Supergroup, Division and Subdivision are PR2 ranks. Other databases do not supply these ranks, so their counts appear as unassigned at that level. ProPortal ecotypes are a separate annotation, not a universal rank.</p>
+  <p id="taxonomy-filter-summary" class="small-muted" aria-live="polite"></p>
+  <p class="small-muted">Filters affect only this taxonomy view, not the whole-run quality-control summaries or exported data. Sample labels remain below the bars; metadata numbers sort numerically, with blanks last.</p>
+  <div id="taxonomy-explorer-chart" class="taxonomy-chart" aria-label="Interactive relative taxonomic abundance by sample"></div>
+  <!-- Every observed taxon is retained; colour repetition is stated explicitly. -->
+  <p class="small-muted">The scrollable key includes every taxon observed in the selected samples. Colours repeat in a fixed order when the palette is exhausted; hover text and names distinguish taxa sharing a colour. No rare taxa are combined into Other.</p>
+  <div id="taxonomy-explorer-legend" class="chart-legend" aria-label="Taxonomy legend" tabindex="0"></div>
+  <h3>All observed taxa</h3>
+  <!-- Bound the complete table's height while keeping its headings visible. -->
+  <div class="table-wrap taxonomy-table" tabindex="0" aria-label="All observed taxa table"><table><thead><tr><th>#</th><th>Taxon</th><th>Total abundance</th><th>Relative abundance</th><th>Samples detected</th></tr></thead><tbody id="taxonomy-explorer-body"></tbody></table></div>
+  <!-- A complete static fallback remains available when JavaScript is disabled. -->
+  <noscript><p class="note">Interactive controls require JavaScript. This static summary includes all samples and all taxa using each record's first informative SILVA or PR2 rank.</p><div class="taxonomy-static-chart">{taxa_chart}</div><div class="table-wrap taxonomy-table"><table><thead><tr><th>#</th><th>Taxon</th><th>Total abundance</th><th>Samples detected</th></tr></thead><tbody>{top_taxa_rows}</tbody></table></div></noscript>
+</section>
 {unmerged_section}
 {internal_section}
 </main><script type="application/json" id="taxonomy-explorer-data">{taxonomy_explorer_json}</script><script>{TAXONOMY_EXPLORER_JS}</script></body></html>"""

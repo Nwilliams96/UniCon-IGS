@@ -9,6 +9,7 @@ import itertools
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -272,6 +273,54 @@ rule inspect_selected_environment_fixture:
             euk_export = output.split("rule export_tax_convert_biom_euk:", 1)[1].split("output:", 1)[0]
             self.assertIn("DAG-fixture_PR2.normalized.classified.qza", euk_export)
             self.assertIn("rule assign_SILVA_species:", output)
+
+    def test_report_only_rerun_uses_custom_samples_and_cannot_schedule_sequence_processing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config = self.setup_project(root)
+            for database in ("SILVA", "PR2"):
+                self.set_mode(root, config, database, "existing")
+            config["samplesheet"] = "config/custom-samples.tsv"
+            (root / "config/samples.tsv").rename(root / config["samplesheet"])
+            (root / "config/config.yml").write_text(json.dumps(config))
+            project = config["projectName"]
+            files = [
+                f"results/{project}.eukfrac-per-sample.tsv",
+                f"results/02-proks/04-DADA2d-plaintext-exports/{project}.16S.latest_stats.tsv",
+                f"results/02-euks/09-DADA2d-plaintext-exports/{project}.18S.latest_stats.tsv",
+                f"results/03-merged/{project}.16S_18S_correction_factors.tsv",
+                f"results/02-proks/10-exports/{project}.SILVA-138.2.species-assignment-summary.tsv",
+                f"results/02-proks/09-subsetting/tax-merged/{project}.PR2-plastid-routing-audit.tsv",
+                f"results/02-proks/09-subsetting/tax-merged/{project}.PR2-plastid-routing-summary.tsv",
+                f"results/00-trimmed/001.qc.txt",
+                f"results/04-formatted/{project}.long_data.tsv",
+                f"results/04-formatted/{project}.asv_sequences.tsv",
+                f"results/02-proks/11-unmerged-16S-rescue/{project}.unmerged_linked_16S.tsv",
+                f"results/02-proks/11-unmerged-16S-rescue/{project}.unmerged_linked_16S_summary.tsv",
+            ]
+            for relative in files:
+                destination = root / relative
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                destination.touch()
+            for relative in ("results/02-proks/02-quality-plots-R1-R2",
+                             "results/02-euks/02-quality-plots-R1-R2",
+                             "results/02-euks/07-quality-plots-concat"):
+                (root / relative).mkdir(parents=True)
+            process = subprocess.run(
+                [sys.executable, "-m", "snakemake", "export_results_for_download",
+                 "--snakefile", "workflow/Snakefile", "--cores", "1", "--dry-run",
+                 "--shared-fs-usage", "input-output", "persistence",
+                 "--forcerun", "generate_pipeline_report", "export_results_for_download",
+                 "--allowed-rules", "generate_pipeline_report", "export_results_for_download"],
+                cwd=root, text=True, capture_output=True, timeout=60,
+            )
+            output = process.stdout + process.stderr
+            self.assertEqual(process.returncode, 0, output)
+            self.assertIn("config/custom-samples.tsv", output)
+            self.assertNotIn("config/samples.tsv", output)
+            scheduled = re.findall(r"(?:local)?rule (\w+):", output)
+            self.assertEqual(sorted(scheduled), ["export_results_for_download", "generate_pipeline_report"])
+            self.assertFalse(Path(config["rawdatadir"]).exists())
 
 
 if __name__ == "__main__":

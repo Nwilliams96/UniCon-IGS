@@ -17,7 +17,8 @@ rule generate_pipeline_report: #Defines the pipeline-report generation rule.
     input:
         # Track the bundled logo so branding changes regenerate the report.
         logo=workflow.source_path("../assets/unicon-logo.png"),
-        samples="config/samples.tsv", #Provides sample identifiers and associated metadata.
+        # Use the same configured sample sheet as the processing rules.
+        samples=config["samplesheet"],
         split_summary="results/" + config["projectName"] + ".eukfrac-per-sample.tsv", #Provides per-sample prokaryotic and eukaryotic read counts.
         stats16s="results/02-proks/04-DADA2d-plaintext-exports/" + config["projectName"] + ".16S.latest_stats.tsv", #Provides the 16S DADA2 retention statistics.
         stats18s="results/02-euks/09-DADA2d-plaintext-exports/" + config["projectName"] + ".18S.latest_stats.tsv", #Provides the 18S DADA2 retention statistics.
