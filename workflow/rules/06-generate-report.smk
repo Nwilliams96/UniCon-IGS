@@ -5,11 +5,12 @@ INTERNAL_STANDARD_REPORT_FIGURES = [] #Defaults to no internal-standard figures 
 INTERNAL_STANDARD_REPORT_TABLE = [] #Defaults to no internal-standard abundance table when correction is disabled.
 UNMERGED_16S_REPORT_SUMMARY = [UNMERGED_16S_SUMMARY] #Includes the linked/unmerged 16S recovery summary in the report.
 if USE_INTERNAL_STANDARDS: #Adds internal-standard results only when that optional workflow branch is enabled.
+    # Use filenames rather than direct producer-rule links for optional report inputs.
     INTERNAL_STANDARD_REPORT_FIGURES = [ #Collects the internal-standard diagnostic figures.
-        rules.intstd_correct_data.output.recovery_plot_png, #Includes the standard-recovery ratio plot.
-        rules.intstd_correct_data.output.domain_plot_png, #Includes the corrected domain-composition plot.
+        str(rules.intstd_correct_data.output.recovery_plot_png), #Includes the standard-recovery ratio plot.
+        str(rules.intstd_correct_data.output.domain_plot_png), #Includes the corrected domain-composition plot.
     ]
-    INTERNAL_STANDARD_REPORT_TABLE = [rules.intstd_correct_data.output.corrected] #Includes the corrected long-format abundance table.
+    INTERNAL_STANDARD_REPORT_TABLE = [str(rules.intstd_correct_data.output.corrected)] #Includes the corrected long-format abundance table.
 
 
 #This rule combines configuration, quality-control, denoising, taxonomic and optional correction results into the project HTML report.
@@ -22,10 +23,11 @@ rule generate_pipeline_report: #Defines the pipeline-report generation rule.
         split_summary="results/" + config["projectName"] + ".eukfrac-per-sample.tsv", #Provides per-sample prokaryotic and eukaryotic read counts.
         stats16s="results/02-proks/04-DADA2d-plaintext-exports/" + config["projectName"] + ".16S.latest_stats.tsv", #Provides the 16S DADA2 retention statistics.
         stats18s="results/02-euks/09-DADA2d-plaintext-exports/" + config["projectName"] + ".18S.latest_stats.tsv", #Provides the 18S DADA2 retention statistics.
-        correction_factors=rules.merge_prok_euk.output.correction_factors, #Provides the applied 16S/18S abundance-correction factors.
-        species_assignment=rules.assign_SILVA_species.output.summary, #Provides the SILVA species-assignment results.
-        chloroplast_audit=rules.resolve_PR2_plastids.output.audit, #Provides the decision recorded for every SILVA/PR2 plastid comparison.
-        chloroplast_summary=rules.resolve_PR2_plastids.output.summary, #Provides overall counts for the plastid-resolution outcomes.
+        # Match these inputs by filename so report-only runs can exclude their producers.
+        correction_factors=str(rules.merge_prok_euk.output.correction_factors), #Provides the applied 16S/18S abundance-correction factors.
+        species_assignment=str(rules.assign_SILVA_species.output.summary), #Provides the SILVA species-assignment results.
+        chloroplast_audit=str(rules.resolve_PR2_plastids.output.audit), #Provides the decision recorded for every SILVA/PR2 plastid comparison.
+        chloroplast_summary=str(rules.resolve_PR2_plastids.output.summary), #Provides overall counts for the plastid-resolution outcomes.
         cutadapt_qc=expand( #Collects primer-trimming reports for every sample.
             "results/00-trimmed/{sample}.qc.txt", sample=samples["sample"] #Builds one Cutadapt report path per sample.
         ),

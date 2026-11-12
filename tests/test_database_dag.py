@@ -274,46 +274,78 @@ rule inspect_selected_environment_fixture:
             self.assertIn("DAG-fixture_PR2.normalized.classified.qza", euk_export)
             self.assertIn("rule assign_SILVA_species:", output)
 
+    def setup_completed_report(self, root, internal_standards=False):
+        """Create only synthetic report inputs, without FASTQs or sequencing tools."""
+        root = Path(root)
+        config = self.setup_project(root)
+        for database in ("SILVA", "PR2"):
+            self.set_mode(root, config, database, "existing")
+        config["samplesheet"] = "config/custom-samples.tsv"
+        (root / "config/samples.tsv").rename(root / config["samplesheet"])
+        if internal_standards:
+            config.update(use_internal_standards=True, intstds=["BP"])
+            (root / config["samplesheet"]).write_text("sample\tBP_ng\n001\t1\n")
+        (root / "config/config.yml").write_text(json.dumps(config))
+        project = config["projectName"]
+        producer_inputs = {
+            "correction_factors": f"results/03-merged/{project}.16S_18S_correction_factors.tsv",
+            "species_assignment": f"results/02-proks/10-exports/{project}.SILVA-138.2.species-assignment-summary.tsv",
+            "chloroplast_audit": f"results/02-proks/09-subsetting/tax-merged/{project}.PR2-plastid-routing-audit.tsv",
+            "chloroplast_summary": f"results/02-proks/09-subsetting/tax-merged/{project}.PR2-plastid-routing-summary.tsv",
+        }
+        long_data = f"results/04-formatted/{project}.long_data.tsv"
+        if internal_standards:
+            long_data = f"results/05-internal-std-corrected/{project}.ISD_removed_long_data.tsv"
+            producer_inputs.update(
+                recovery_plot=f"results/06-figures/{project}.recovery_ratios.png",
+                domain_plot=f"results/06-figures/{project}.Domain_by_sampleID.png",
+                corrected_table=f"results/05-internal-std-corrected/{project}.BP.ISD_corrected_long_data.tsv",
+            )
+        files = list(producer_inputs.values()) + [
+            f"results/{project}.eukfrac-per-sample.tsv",
+            f"results/02-proks/04-DADA2d-plaintext-exports/{project}.16S.latest_stats.tsv",
+            f"results/02-euks/09-DADA2d-plaintext-exports/{project}.18S.latest_stats.tsv",
+            "results/00-trimmed/001.qc.txt", long_data,
+            f"results/04-formatted/{project}.asv_sequences.tsv",
+            f"results/02-proks/11-unmerged-16S-rescue/{project}.unmerged_linked_16S.tsv",
+            f"results/02-proks/11-unmerged-16S-rescue/{project}.unmerged_linked_16S_summary.tsv",
+            # A positive-control merge rule must have complete inputs and outputs,
+            # so its rerun is caused by provenance rather than absent files.
+            f"results/02-proks/10-exports/{project}.all-16S-seqs.with-tax.tsv",
+            f"results/02-euks/15-exports/{project}.all-18S-seqs.with-PR2-tax.tsv",
+            f"results/{project}.eukfrac-all.tsv",
+            f"results/02-proks/10-exports/{project}.Synechococcales.proportal-classified.tsv",
+            f"results/03-merged/{project}.merged_uncorrected.tsv",
+            f"results/03-merged/{project}.merged_dada2_corrected.tsv",
+            f"results/03-merged/{project}.merged_dada2_18S_corrected.tsv",
+        ]
+        for relative in files:
+            destination = root / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.touch()
+        for relative in ("results/02-proks/02-quality-plots-R1-R2",
+                         "results/02-euks/02-quality-plots-R1-R2",
+                         "results/02-euks/07-quality-plots-concat"):
+            (root / relative).mkdir(parents=True)
+        return config, files, producer_inputs
+
+    def report_only_run(self, root, dry_run=True):
+        command = [
+            sys.executable, "-m", "snakemake", "export_results_for_download",
+            "--snakefile", "workflow/Snakefile", "--cores", "1",
+            "--shared-fs-usage", "input-output", "persistence",
+            "--forcerun", "generate_pipeline_report", "export_results_for_download",
+            "--allowed-rules", "generate_pipeline_report", "export_results_for_download",
+        ]
+        if dry_run:
+            command.append("--dry-run")
+        return subprocess.run(command, cwd=root, text=True, capture_output=True, timeout=60)
+
     def test_report_only_rerun_uses_custom_samples_and_cannot_schedule_sequence_processing(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            config = self.setup_project(root)
-            for database in ("SILVA", "PR2"):
-                self.set_mode(root, config, database, "existing")
-            config["samplesheet"] = "config/custom-samples.tsv"
-            (root / "config/samples.tsv").rename(root / config["samplesheet"])
-            (root / "config/config.yml").write_text(json.dumps(config))
-            project = config["projectName"]
-            files = [
-                f"results/{project}.eukfrac-per-sample.tsv",
-                f"results/02-proks/04-DADA2d-plaintext-exports/{project}.16S.latest_stats.tsv",
-                f"results/02-euks/09-DADA2d-plaintext-exports/{project}.18S.latest_stats.tsv",
-                f"results/03-merged/{project}.16S_18S_correction_factors.tsv",
-                f"results/02-proks/10-exports/{project}.SILVA-138.2.species-assignment-summary.tsv",
-                f"results/02-proks/09-subsetting/tax-merged/{project}.PR2-plastid-routing-audit.tsv",
-                f"results/02-proks/09-subsetting/tax-merged/{project}.PR2-plastid-routing-summary.tsv",
-                f"results/00-trimmed/001.qc.txt",
-                f"results/04-formatted/{project}.long_data.tsv",
-                f"results/04-formatted/{project}.asv_sequences.tsv",
-                f"results/02-proks/11-unmerged-16S-rescue/{project}.unmerged_linked_16S.tsv",
-                f"results/02-proks/11-unmerged-16S-rescue/{project}.unmerged_linked_16S_summary.tsv",
-            ]
-            for relative in files:
-                destination = root / relative
-                destination.parent.mkdir(parents=True, exist_ok=True)
-                destination.touch()
-            for relative in ("results/02-proks/02-quality-plots-R1-R2",
-                             "results/02-euks/02-quality-plots-R1-R2",
-                             "results/02-euks/07-quality-plots-concat"):
-                (root / relative).mkdir(parents=True)
-            process = subprocess.run(
-                [sys.executable, "-m", "snakemake", "export_results_for_download",
-                 "--snakefile", "workflow/Snakefile", "--cores", "1", "--dry-run",
-                 "--shared-fs-usage", "input-output", "persistence",
-                 "--forcerun", "generate_pipeline_report", "export_results_for_download",
-                 "--allowed-rules", "generate_pipeline_report", "export_results_for_download"],
-                cwd=root, text=True, capture_output=True, timeout=60,
-            )
+            config, _, _ = self.setup_completed_report(root)
+            process = self.report_only_run(root)
             output = process.stdout + process.stderr
             self.assertEqual(process.returncode, 0, output)
             self.assertIn("config/custom-samples.tsv", output)
@@ -321,6 +353,85 @@ rule inspect_selected_environment_fixture:
             scheduled = re.findall(r"(?:local)?rule (\w+):", output)
             self.assertEqual(sorted(scheduled), ["export_results_for_download", "generate_pipeline_report"])
             self.assertFalse(Path(config["rawdatadir"]).exists())
+
+    def test_report_only_rerun_reuses_stale_provenance_without_upstream_jobs(self):
+        for internal_standards in (False, True):
+            with self.subTest(internal_standards=internal_standards), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                config, files, _ = self.setup_completed_report(root, internal_standards)
+                # Generate real Snakemake metadata using a harmless fixture rule.
+                # Its code differs from the real producers; no metadata is deleted
+                # or edited to make the report-only assertion pass.
+                seed = root / "Seed.smk"
+                seed.write_text("rule fixture_seed:\n    output: " + repr(files)
+                                + "\n    shell: 'touch {output:q}'\n")
+                process = subprocess.run(
+                    [sys.executable, "-m", "snakemake", "--snakefile", str(seed), "--cores", "1", "--forceall",
+                     "--shared-fs-usage", "input-output", "persistence"],
+                    cwd=root, text=True, capture_output=True, timeout=60,
+                )
+                self.assertEqual(process.returncode, 0, process.stdout + process.stderr)
+                self.assertIn("rule fixture_seed:", process.stdout + process.stderr)
+                records = [path for path in (root / ".snakemake/metadata").rglob("*") if path.is_file()]
+                self.assertEqual(len(records), len(files))
+                self.assertTrue(all(json.loads(path.read_text())["rule"] == "fixture_seed" for path in records))
+                # Equal fixture timestamps isolate provenance changes from mtime
+                # changes. Only synthetic files are touched; metadata stays intact.
+                fixture_paths = [root / relative for relative in files]
+                fixture_paths.append(root / "config/prok_and_euk_SSU_amplicon_molarities.tsv")
+                timestamp = max(path.stat().st_mtime_ns for path in fixture_paths)
+                for path in fixture_paths:
+                    os.utime(path, ns=(timestamp, timestamp))
+                rule_path = root / "workflow/rules/06-generate-report.smk"
+                patched = rule_path.read_text()
+                # Reintroducing one direct rule link must expose the stale merge
+                # producer. This control proves the fixture covers the logged bug.
+                legacy = patched.replace(
+                    'correction_factors=str(rules.merge_prok_euk.output.correction_factors)',
+                    'correction_factors=rules.merge_prok_euk.output.correction_factors',
+                )
+                self.assertNotEqual(legacy, patched)
+                rule_path.write_text(legacy)
+                control = self.report_only_run(root)
+                control_output = control.stdout + control.stderr
+                self.assertEqual(control.returncode, 0, control_output)
+                self.assertIn("rule merge_prok_euk:", control_output)
+                self.assertIn("Code has changed since last execution", control_output)
+                rule_path.write_text(patched)
+                process = self.report_only_run(root)
+                output = process.stdout + process.stderr
+                self.assertEqual(process.returncode, 0, output)
+                scheduled = re.findall(r"(?:local)?rule (\w+):", output)
+                self.assertEqual(sorted(scheduled), ["export_results_for_download", "generate_pipeline_report"])
+                # Also execute the two real report/export scripts on synthetic,
+                # empty result tables. Upstream files must not be rewritten.
+                before = {relative: ((root / relative).stat().st_mtime_ns,
+                                     hashlib.sha256((root / relative).read_bytes()).hexdigest())
+                          for relative in files}
+                process = self.report_only_run(root, dry_run=False)
+                self.assertEqual(process.returncode, 0, process.stdout + process.stderr)
+                for relative, (mtime, checksum) in before.items():
+                    self.assertEqual((root / relative).stat().st_mtime_ns, mtime)
+                    self.assertEqual(hashlib.sha256((root / relative).read_bytes()).hexdigest(), checksum)
+                report = f"{config['projectName']}.pipeline-report.html"
+                self.assertEqual((root / "results/07-report" / report).read_bytes(),
+                                 (root / (config["projectName"] + "-Results-Export") / report).read_bytes())
+                self.assertFalse(Path(config["rawdatadir"]).exists())
+
+    def test_report_only_rerun_missing_input_stops_instead_of_rebuilding(self):
+        fields = ("correction_factors", "species_assignment", "chloroplast_audit",
+                  "chloroplast_summary", "recovery_plot", "domain_plot", "corrected_table")
+        for field in fields:
+            with self.subTest(field=field), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                _, _, inputs = self.setup_completed_report(root, internal_standards=True)
+                (root / inputs[field]).unlink()  # Remove only this synthetic fixture input.
+                process = self.report_only_run(root)
+                output = process.stdout + process.stderr
+                self.assertNotEqual(process.returncode, 0, output)
+                self.assertIn("MissingInputException in rule generate_pipeline_report", output)
+                self.assertIn(inputs[field], output)
+                self.assertNotRegex(output, r"(?:local)?rule (merge_prok_euk|assign_SILVA_species|resolve_PR2_plastids|intstd_correct_data):")
 
 
 if __name__ == "__main__":
