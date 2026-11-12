@@ -69,10 +69,50 @@ test("run summaries stay visible while both per-sample tables start collapsed", 
 test("signed latitudes and decimal depths sort numerically with IDs preserved", async () => withReport(async page => {
   await page.locator("#taxonomy-plot-field").selectOption("Latitude");
   assert.deepEqual(await sampleIds(page), ["001", "002", "030", "010", "020"]);
+  assert.equal(await page.locator(".taxonomy-x-axis-title").innerText(), "Latitude");
+  assert.deepEqual(await page.locator(".taxonomy-sample-label").allTextContents(), ["-39.5", "-5.25", "12.25", "(blank)", "(blank)"]);
   await page.locator("#taxonomy-plot-field").selectOption("Depth");
   assert.deepEqual(await sampleIds(page), ["030", "002", "001", "010", "020"]);
-  assert.deepEqual(await page.locator(".taxonomy-sample-label").allTextContents(), ["030", "002", "001", "010", "020"]);
+  assert.equal(await page.locator(".taxonomy-x-axis-title").innerText(), "Depth");
+  assert.deepEqual(await page.locator(".taxonomy-sample-label").allTextContents(), ["2.05", "2.5", "100.5", "(blank)", "(blank)"]);
+  assert.match(await page.locator(".taxonomy-sample-label").first().getAttribute("title"), /^030\n/);
   assert.match(await page.locator(".taxonomy-sample-label").first().getAttribute("title"), /Temperature: 20.5/);
+  await page.locator("#taxonomy-plot-field").selectOption("SampleID");
+  assert.equal(await page.locator(".taxonomy-x-axis-title").innerText(), "SampleID");
+  assert.deepEqual(await page.locator(".taxonomy-sample-label").allTextContents(), ["001", "002", "010", "020", "030"]);
+}));
+
+test("categorical and arbitrary metadata label the axis without changing sample identity", async () => withReport(async page => {
+  await page.locator("#taxonomy-plot-field").selectOption("Condition");
+  assert.equal(await page.locator(".taxonomy-x-axis-title").innerText(), "Condition");
+  assert.deepEqual(await page.locator(".taxonomy-sample-label").allTextContents(), ["Environmental", "Environmental", "Environmental", "Mock", "(blank)"]);
+  await page.locator("#taxonomy-plot-field").selectOption("Temperature");
+  assert.equal(await page.locator(".taxonomy-x-axis-title").innerText(), "Temperature");
+  assert.deepEqual(await page.locator(".taxonomy-sample-label").allTextContents(), ["20.5", "20.5", "21", "(blank)", "(blank)"]);
+  assert.deepEqual(await sampleIds(page), ["001", "030", "002", "010", "020"]);
+}));
+
+test("translucent backgrounds do not fade plot contents and dropdown arrows are inset", async () => withReport(async page => {
+  const style = await page.evaluate(() => {
+    const control = document.querySelector(".explorer-control");
+    const chart = document.querySelector(".frozen-chart");
+    const bar = chart.querySelector("rect");
+    return {
+      arrowRight: getComputedStyle(control, "::after").right,
+      arrowPointer: getComputedStyle(control, "::after").pointerEvents,
+      background: getComputedStyle(chart).backgroundColor,
+      chartOpacity: getComputedStyle(chart).opacity,
+      barOpacity: getComputedStyle(bar).opacity,
+      fill: bar.getAttribute("fill"), stroke: bar.getAttribute("stroke"),
+    };
+  });
+  assert.equal(style.arrowRight, "14px");
+  assert.equal(style.arrowPointer, "none");
+  assert.equal(style.background, "rgba(255, 255, 255, 0.6)");
+  assert.equal(style.chartOpacity, "1");
+  assert.equal(style.barOpacity, "1");
+  assert.equal(style.fill, "#24543d");
+  assert.equal(style.stroke, "#111111");
 }));
 
 test("metadata exclusions are independent of sorting and leave QC totals untouched", async () => withReport(async page => {
@@ -189,17 +229,23 @@ test("legend scrolls vertically and sample labels remain below the bars", async 
 }));
 
 test("narrow layout keeps its y-axis fixed while bars scroll horizontally", async () => withReport(async page => {
+  await page.locator("#taxonomy-plot-field").selectOption("Latitude");
   const checks = await page.evaluate(() => {
     const axis = document.querySelector(".taxonomy-y-axis");
     const scroll = document.querySelector(".taxonomy-scroll");
     const before = axis.getBoundingClientRect().x;
+    const title = document.querySelector(".taxonomy-x-axis-title");
+    const titleBefore = title.getBoundingClientRect().x;
     scroll.scrollLeft = 120;
     return {
       before, after: axis.getBoundingClientRect().x, moved: scroll.scrollLeft,
+      titleBefore, titleAfter: title.getBoundingClientRect().x, title: title.textContent,
       pageWidth: document.documentElement.scrollWidth, viewport: innerWidth,
     };
   });
   assert.equal(checks.before, checks.after);
+  assert.equal(checks.titleBefore, checks.titleAfter);
+  assert.equal(checks.title, "Latitude");
   assert.ok(checks.moved > 0);
   assert.ok(checks.pageWidth <= checks.viewport);
   if (process.env.REPORT_SCREENSHOT_DIR) {
@@ -234,5 +280,9 @@ test("metadata labels are rendered as text, not executable HTML", async () => wi
   await selectFilterField(page, "Temperature");
   assert.match(await page.locator("#taxonomy-metadata-values").innerText(), /<img src=x/);
   assert.equal(await page.locator("#taxonomy-metadata-values img").count(), 0);
+  assert.equal(await page.evaluate(() => window.injected), undefined);
+  await page.locator("#taxonomy-plot-field").selectOption("Temperature");
+  assert.equal(await page.locator(".taxonomy-sample-label img").count(), 0);
+  assert.match((await page.locator(".taxonomy-sample-label").allTextContents()).join(" "), /<img src=x/);
   assert.equal(await page.evaluate(() => window.injected), undefined);
 }));

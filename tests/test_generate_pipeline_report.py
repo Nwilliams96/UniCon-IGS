@@ -5,6 +5,7 @@ import json
 import re
 import tempfile
 import unittest
+import xml.etree.ElementTree as ET
 import zipfile
 from pathlib import Path
 from types import SimpleNamespace
@@ -73,6 +74,71 @@ def render_interaction_fixture(root):
 
 
 class GeneratePipelineReportTests(unittest.TestCase):
+    def test_read_bars_are_solid_forest_green_with_thin_black_borders(self):
+        chart = REPORT.svg_sample_read_counts({"001": 120, "002": 60}, ["001", "002"], "Reads")
+        bars = ET.fromstring("<root>" + chart + "</root>").findall(".//rect")
+        self.assertEqual(len(bars), 2)
+        self.assertEqual([bar.attrib["height"] for bar in bars], ["285.0", "142.5"])
+        for bar in bars:
+            self.assertEqual(bar.attrib["fill"], "#24543d")
+            self.assertEqual(bar.attrib["stroke"], "#111111")
+            self.assertEqual(bar.attrib["stroke-width"], "0.8")
+            self.assertNotIn("opacity", bar.attrib)
+
+    def test_domain_display_hides_other_labels_without_changing_denominators_or_inputs(self):
+        values = {"001": {"Bacteria": 60, "Eukaryota": 20, "Archaea": 10,
+                          "Unassigned": 5, "Eukaryota:nucl": 5}}
+        original = json.loads(json.dumps(values))
+        chart = REPORT.svg_composition(values, "Domains")
+        root = ET.fromstring("<root>" + chart + "</root>")
+        bars = root.findall(".//rect")
+        self.assertEqual([bar.attrib["height"] for bar in bars], ["180.0", "60.0", "30.0"])
+        self.assertEqual([bar.attrib["fill"] for bar in bars], list(REPORT.DOMAIN_COLOURS.values()))
+        self.assertNotIn("Unassigned", chart)
+        self.assertNotIn("Eukaryota:nucl", chart)
+        self.assertIn("60.0%", chart)
+        self.assertEqual(values, original)
+        hidden_only = REPORT.svg_composition({"001": {"Unassigned": 10}}, "Domains")
+        self.assertNotIn("<rect", hidden_only)
+        self.assertIn("001", hidden_only)  # Keep the sample even when no domain is displayed.
+
+    def test_assignment_colours_do_not_shift_when_other_categories_are_absent(self):
+        chart = REPORT.svg_assignment_counts({"Eukaryotic 18S": 12, "Unassigned": 3})
+        bars = ET.fromstring(chart).findall("rect")
+        self.assertEqual([bar.attrib["fill"] for bar in bars], ["#346b8b", "#9b9c95"])
+        self.assertEqual([bar.attrib["width"] for bar in bars], ["570.0", "142.5"])
+
+    def test_quality_bands_keep_their_coordinates_and_use_forest_green(self):
+        points = [{"position": 1, "9%": 20, "25%": 25, "50%": 30, "75%": 35, "91%": 40},
+                  {"position": 100, "9%": 10, "25%": 15, "50%": 20, "75%": 25, "91%": 30}]
+        root = ET.fromstring(REPORT.svg_quality_profile(points, "Quality"))
+        polygons = root.findall("polygon")
+        self.assertEqual(polygons[0].attrib["points"], "58.0,54.4 800.0,115.3 800.0,237.1 58.0,176.2")
+        self.assertEqual([p.attrib["fill"] for p in polygons], ["#24543d", "#24543d"])
+        self.assertEqual([p.attrib["opacity"] for p in polygons], [".16", ".40"])
+        self.assertEqual(root.find("path").attrib["stroke"], "#24543d")
+
+    def test_internal_standard_markers_remain_circles_with_consistent_domain_colours(self):
+        chart = REPORT.svg_log_series(
+            ["001"], {"001": {"Archaea": 10, "Bacteria": 100}},
+            ["Archaea", "Bacteria"], "Domain copies", category_colours=REPORT.DOMAIN_COLOURS,
+        )
+        root = ET.fromstring("<root>" + chart + "</root>")
+        circles = root.findall(".//circle")
+        self.assertEqual([point.attrib["fill"] for point in circles], ["#d59c32", "#24543d"])
+        self.assertEqual([point.find("title").text for point in circles],
+                         ["001 — Archaea: 10", "001 — Bacteria: 100"])
+        self.assertEqual(root.findall(".//rect"), [])
+        self.assertEqual(root.findall(".//polygon"), [])
+
+    def test_plot_background_opacity_and_domain_omissions_are_explicit(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            rendered = self.render_branding_fixture(Path(tmp))
+        self.assertIn("--plot-background:rgba(255,255,255,0.60)", rendered)
+        self.assertIn("Only Bacteria, Eukaryota and Archaea are displayed", rendered)
+        self.assertIn("Percentages use all assignments", rendered)
+        self.assertIn("other assignments remain in the exported data", rendered)
+
     def render_branding_fixture(self, root, logo=None):
         """Render synthetic QC records without running sequence processing."""
         inputs = {

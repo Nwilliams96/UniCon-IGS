@@ -21,6 +21,30 @@ PALETTE = [
     "#E69F00", "#009E73", "#D55E00", "#56B4E9", "#64748B",
 ]
 
+# Use forest green for raw and retained read-count bars.
+READ_COUNT_COLOUR = "#24543d"
+
+# Keep biological-domain colours consistent across report figures.
+DOMAIN_COLOURS = {
+    "Bacteria": "#24543d",   # Forest green.
+    "Eukaryota": "#346b8b",  # Muted blue.
+    "Archaea": "#d59c32",    # Ochre.
+}
+
+# Keep assignment colours stable even when a category is absent.
+ASSIGNMENT_COLOURS = {
+    "Prokaryotic 16S": "#24543d",   # Match the bacterial-domain colour.
+    "Eukaryotic 18S": "#346b8b",    # Match the eukaryotic-domain colour.
+    "Chloroplast 16S": "#b4a347",   # Distinguish plastids with olive.
+    "Mitochondrial 16S": "#b76547", # Distinguish mitochondria with terracotta.
+    "Unassigned": "#9b9c95",       # Reserve grey for unresolved assignments.
+    "Other": "#9b9c95",            # Keep miscellaneous assignments neutral.
+}
+
+# Start internal-standard series with the approved blue, ochre and purple.
+# Retain the existing accessible palette for additional correction methods.
+INTERNAL_STANDARD_PALETTE = ["#346b8b", "#d59c32", "#9278a6", *PALETTE]
+
 TAXONOMY_RANKS = (
     "Domain", "Kingdom", "Supergroup", "Division", "Subdivision", "Phylum", "Class",
     "Order", "Family", "Genus", "Species", "ProPortal_ASV_Ecotype",
@@ -271,9 +295,9 @@ TAXONOMY_EXPLORER_JS = r"""
       });
       const label = document.createElement("div");
       label.className = "taxonomy-sample-label";
-      // Sorting by metadata must not replace the sample identifier beneath its bar.
-      label.textContent = sampleId;
-      // Expose every descriptive field when hovering over a sample label.
+      // Label each bar with the selected sorting field; show missing values explicitly.
+      label.textContent = metadataValue(sampleId, sample, field) || "(blank)";
+      // Preserve the sample ID and every descriptive field on hover.
       label.title = `${sampleId}\n${metadataText}`;
       column.append(bar, label);
       plot.appendChild(column);
@@ -289,7 +313,14 @@ TAXONOMY_EXPLORER_JS = r"""
     const scroller = document.createElement("div");
     scroller.className = "taxonomy-scroll";
     scroller.appendChild(plot);
-    chart.append(axis, scroller);
+    // Identify the selected sorting field beneath the scrolling bars.
+    const xAxisTitle = document.createElement("div");
+    // Centre this title in the chart's second grid column, outside the scroller.
+    xAxisTitle.className = "taxonomy-x-axis-title";
+    // Use textContent so arbitrary metadata column names cannot execute markup.
+    xAxisTitle.textContent = field;
+    // Keep the title visible even when the user scrolls sideways through samples.
+    chart.append(axis, scroller, xAxisTitle);
 
     // Show every positive-abundance taxon in the selected samples; colours can repeat.
     rows.forEach(([taxon]) => {
@@ -547,7 +578,9 @@ def svg_sample_read_counts(counts, sample_order, label):
         y = top + plot_h - bar_h
         pieces.append(
             f'<rect x="{x:.1f}" y="{y:.1f}" width="{bar_w:.1f}" height="{bar_h:.1f}" '
-            f'rx="3" fill="#0072B2"><title>{esc(sample)}: {fmt_count(value)}</title></rect>'
+            # Keep bars solid while adding the approved thin black outline.
+            f'rx="3" fill="{READ_COUNT_COLOUR}" stroke="#111111" stroke-width="0.8">'
+            f'<title>{esc(sample)}: {fmt_count(value)}</title></rect>'
         )
         pieces.append(
             f'<text transform="translate({x + bar_w / 2:.1f},{height-bottom+12}) rotate(55)" '
@@ -634,9 +667,8 @@ def svg_composition(sample_totals, title):
     category_totals = Counter()
     for values in sample_totals.values():
         category_totals.update(values)
-    categories = [name for name, _ in category_totals.most_common(9)]
-    if len(category_totals) > len(categories):
-        categories.append("Other")
+    # Display only the requested domains; do not filter the underlying counts.
+    categories = [domain for domain in DOMAIN_COLOURS if category_totals[domain] > 0]
     width = max(690, 30 + 42 * len(samples))
     longest_label = max((len(str(sample)) for sample in samples), default=0)
     label_space = min(145, max(80, longest_label * 6))
@@ -652,26 +684,27 @@ def svg_composition(sample_totals, title):
         axis_ticks.append((y, f"{tick}%"))
     for index, sample in enumerate(samples):
         values = sample_totals[sample]
+        # Keep every assignment in the denominator, including hidden categories.
         total = sum(values.values()) or 1
         x = plot_x + step * index + (step - bar_w) / 2
         y_bottom = plot_y + plot_h
-        for cat_index, category in enumerate(categories):
+        for category in categories:
             value = values.get(category, 0)
-            if category == "Other":
-                value = sum(v for k, v in values.items() if k not in categories)
             segment_h = plot_h * value / total
             y_bottom -= segment_h
             pieces.append(
                 f'<rect x="{x:.1f}" y="{y_bottom:.1f}" width="{bar_w:.1f}" height="{segment_h:.1f}" '
-                f'fill="{PALETTE[cat_index % len(PALETTE)]}"><title>{esc(sample)} — {esc(category)}: {100 * value / total:.1f}%</title></rect>'
+                # Match each domain's segment colour to its legend and ISD plots.
+                f'fill="{DOMAIN_COLOURS[category]}"><title>{esc(sample)} — {esc(category)}: {100 * value / total:.1f}%</title></rect>'
             )
         pieces.append(f'<text transform="translate({x + bar_w / 2:.1f},{plot_y + plot_h + 10}) rotate(55)" class="svg-label">{esc(sample)}</text>')
     pieces.append('</svg>')
     legend = ['<div class="chart-legend" aria-label="Domain legend">']
-    for index, category in enumerate(categories):
+    for category in categories:
         legend.append(
             f'<span class="legend-item"><span class="legend-swatch" '
-            f'style="background:{PALETTE[index % len(PALETTE)]}"></span>{esc(category)}</span>'
+            # Keep domain colours stable when a different domain is absent.
+            f'style="background:{DOMAIN_COLOURS[category]}"></span>{esc(category)}</span>'
         )
     legend.append('</div>')
     return frozen_column_chart(
@@ -715,13 +748,15 @@ def svg_assignment_counts(assignment_totals):
     plot_w = width - left - right
     max_value = max((value for _, value in data), default=1) or 1
     pieces = [
-        f'<svg viewBox="0 0 {width} {height}" role="img" '
+        # Give the assignment figure the shared translucent report background.
+        f'<svg class="assignment-chart" viewBox="0 0 {width} {height}" role="img" '
         'aria-label="Sequence assignment counts">'
     ]
     for index, (category, value) in enumerate(data):
         y = 26 + index * 48
         bar_w = plot_w * value / max_value
-        colour = PALETTE[index % len(PALETTE)]
+        # Select by category name, not its changing position in the figure.
+        colour = ASSIGNMENT_COLOURS[category]
         pieces.append(
             f'<text x="{left - 12}" y="{y + 23}" text-anchor="end" '
             f'class="svg-label">{esc(category)}</text>'
@@ -840,9 +875,12 @@ def svg_quality_profile(points, title):
         )
     pieces.extend(
         [
-            f'<polygon points="{band_path("9%", "91%")}" fill="#9ecae1" opacity=".48"/>',
-            f'<polygon points="{band_path("25%", "75%")}" fill="#4292c6" opacity=".58"/>',
-            f'<path d="{median_path}" fill="none" stroke="#084594" stroke-width="2.4"/>',
+            # Preserve the percentile boundaries; change only their appearance.
+            f'<polygon points="{band_path("9%", "91%")}" fill="#24543d" opacity=".16"/>',
+            # Use a stronger green band for the central half of quality scores.
+            f'<polygon points="{band_path("25%", "75%")}" fill="#24543d" opacity=".40"/>',
+            # Keep the median line solid and clearly visible.
+            f'<path d="{median_path}" fill="none" stroke="#24543d" stroke-width="2.4"/>',
         ]
     )
     tick_count = min(6, len(points))
@@ -903,7 +941,8 @@ def internal_method_label(column, standard_ids):
     ).replace("_", " ")
 
 
-def svg_log_series(sample_order, values, series_labels, title):
+# Accept optional category colours without changing plotted values or log scales.
+def svg_log_series(sample_order, values, series_labels, title, category_colours=None):
     positives = [
         parsed for sample in sample_order for value in values.get(sample, {}).values()
         if (parsed := number(value)) is not None and parsed > 0
@@ -922,8 +961,13 @@ def svg_log_series(sample_order, values, series_labels, title):
         log_span = high - low
         low -= max(0.25, log_span * 0.15)
         high += log_span * 0.05
+    # Use fixed domain colours when supplied; otherwise colour correction methods.
+    category_colours = category_colours or {}
     colours = {
-        label: PALETTE[index % len(PALETTE)]
+        # Fall back to the standard-series palette for other labels.
+        label: category_colours.get(
+            label, INTERNAL_STANDARD_PALETTE[index % len(INTERNAL_STANDARD_PALETTE)]
+        )
         for index, label in enumerate(series_labels)
     }
     pieces = [
@@ -1022,6 +1066,8 @@ def internal_standard_html(config, corrected_rows):
         chart = svg_log_series(
             samples, domain_totals[column], domains,
             f"Domain copies per unit — {method} (log10 scale)",
+            # Keep biological colours consistent with the Domain composition plot.
+            category_colours=DOMAIN_COLOURS,
         )
         domain_charts.append(f'<details><summary>{esc(method)}</summary>{chart}</details>')
     return recovery_chart + "<h3>Domain abundance by correction method</h3>" + "".join(domain_charts)
@@ -1668,7 +1714,7 @@ def render_report(config, paths, output_path):
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{esc(project_name)} pipeline report</title>
 <style>
-/* Match the configuration website's surfaces without changing chart data colours. */
+/* Match the configuration website's parchment surfaces and approved plot styling. */
 :root{{
   --ink:#101010; /* Use near-black for readable text and branding. */
   --muted:#636363; /* Keep secondary text readable on parchment and cream. */
@@ -1676,6 +1722,7 @@ def render_report(config, paths, output_path):
   --paper:#fcf8ef; /* Give report sections a light cream surface. */
   --wash:#f3ead7; /* Use the website's parchment colour around the sections. */
   --accent:#101010; /* Use a neutral accent instead of the former blue branding. */
+  --plot-background:rgba(255,255,255,0.60); /* Apply 60% opacity only to chart backgrounds, not their contents. */
   --serif:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif; /* Match the website's headings with local font fallbacks. */
 }}
 *{{box-sizing:border-box}} body{{margin:0;background:var(--wash);color:var(--ink);font:15px/1.55 Inter,ui-sans-serif,system-ui,-apple-system,sans-serif}}
@@ -1690,21 +1737,50 @@ header p{{margin:0;opacity:.82}}
 nav{{position:sticky;top:0;z-index:3;background:rgba(243,234,215,.96);backdrop-filter:blur(9px);border-bottom:1px solid var(--line);padding:12px max(24px,calc((100vw - 1180px)/2));overflow:auto;white-space:nowrap}}
 nav a{{color:var(--ink);text-decoration:none;margin-right:22px;font-weight:650}} /* Keep navigation text consistent with the website. */
 main{{max-width:1180px;margin:28px auto 70px;padding:0 22px}} section{{background:var(--paper);border:1px solid var(--line);border-radius:16px;padding:28px;margin:20px 0;box-shadow:0 10px 28px #1018280a}}
-/* Use the neutral accent for section labels; scientific plot colours stay unchanged. */
+/* Use the neutral accent for section labels without competing with plot colours. */
 h2{{font-size:25px;margin:.1em 0 .35em}} h3{{margin-top:28px}} .eyebrow{{color:var(--accent);font-size:12px;font-weight:800;letter-spacing:.12em;text-transform:uppercase}}
 /* Carry the parchment surface into summary cards without changing their values or layout. */
 .cards{{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin:24px 0}} .card{{border:1px solid var(--line);border-radius:12px;padding:18px;background:var(--wash)}} .card strong{{display:block;font-size:28px;line-height:1.2}} .card span{{color:var(--muted);font-size:13px}}
 /* Match table headers to the warm page palette while retaining horizontal scrolling. */
 .table-wrap{{overflow:auto;border:1px solid var(--line);border-radius:10px}} table{{width:100%;border-collapse:collapse;white-space:nowrap}} th,td{{text-align:left;padding:10px 12px;border-bottom:1px solid var(--line)}} thead th{{background:var(--wash);font-size:12px;text-transform:uppercase;letter-spacing:.04em}} tbody tr:last-child td,tbody tr:last-child th{{border-bottom:0}}
 .pill{{display:inline-block;padding:3px 8px;border-radius:99px;font-size:12px;font-weight:750}} .pill.good{{background:#dbeafe;color:#1e40af}} .pill.warn{{background:#fef3c7;color:#92400e}} .pill.bad{{background:#fce7f3;color:#9d174d}} .pill.neutral{{background:#e2e8f0;color:#475569}}
-.svg-label{{fill:#475467;font-size:12px}} .svg-total{{fill:#344054;font-size:12px;font-weight:700}} .grid{{stroke:#e4e7ec;stroke-width:1}} .axis-tick{{stroke:#94a3b8;stroke-width:1}} svg{{max-width:100%;height:auto}} .frozen-chart{{display:grid;grid-template-columns:78px minmax(0,1fr);align-items:start;margin:18px 0;border:1px solid var(--line);border-radius:10px;background:white;overflow:hidden}} .frozen-y-axis{{display:block;max-width:none;background:white;border-right:1px solid var(--line);z-index:1}} .chart-scroll{{overflow-x:auto;min-width:0}} .scroll-chart-svg{{display:block;max-width:none;height:auto}}
+.svg-label{{fill:var(--muted);font-size:12px}} .svg-total{{fill:var(--ink);font-size:12px;font-weight:700}} .grid{{stroke:var(--line);stroke-width:1}} .axis-tick{{stroke:var(--muted);stroke-width:1}} svg{{max-width:100%;height:auto}}
+/* Tint each chart once; transparent child axes avoid compounding the opacity. */
+.frozen-chart{{display:grid;grid-template-columns:78px minmax(0,1fr);align-items:start;margin:18px 0;border:1px solid var(--line);border-radius:10px;background:var(--plot-background);overflow:hidden}}
+.frozen-y-axis{{display:block;max-width:none;background:transparent;border-right:1px solid var(--line);z-index:1}}
+.chart-scroll{{overflow-x:auto;min-width:0}} .scroll-chart-svg{{display:block;max-width:none;height:auto}}
+/* The assignment figure is not inside a frozen-axis wrapper, so tint it directly. */
+.assignment-chart{{background:var(--plot-background);border-radius:8px}}
 .chart-legend{{display:flex;flex-wrap:wrap;gap:10px 22px;align-items:center;padding:12px 10px 2px;min-width:max-content}} .legend-item{{display:inline-flex;align-items:center;gap:7px;color:#475467;font-size:12px;font-weight:650}} .legend-swatch{{display:inline-block;width:12px;height:12px;border-radius:2px;flex:none}}
-.explorer-controls{{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:14px;margin:22px 0 12px}} .explorer-control label{{display:block;margin-bottom:5px;color:#344054;font-size:13px;font-weight:750}} .explorer-control select{{width:100%;padding:10px 12px;border:1px solid #cbd5e1;border-radius:8px;background:white;color:var(--ink);font:inherit}} .explorer-control select:disabled{{background:#f1f5f9;color:#94a3b8}} .small-muted{{color:var(--muted);font-size:13px}} .taxonomy-chart{{display:grid;grid-template-columns:54px minmax(0,1fr);margin:20px 0 8px;border:1px solid var(--line);border-radius:10px;background:white;overflow:hidden}} .taxonomy-y-axis{{position:relative;height:450px;border-right:1px solid var(--line);background:white;z-index:1}} .taxonomy-y-axis span{{position:absolute;right:8px;transform:translateY(-50%);color:#475467;font-size:12px}} .taxonomy-scroll{{overflow-x:auto;min-width:0;padding:20px 18px;background:repeating-linear-gradient(to bottom,#fff 0,#fff 74px,#e4e7ec 75px)}} .taxonomy-stacked-plot{{display:flex;align-items:flex-start;gap:5px;height:410px;min-width:max-content}} .taxonomy-sample-column{{position:relative;display:flex;flex-direction:column;justify-content:flex-start;width:34px;height:400px}} .taxonomy-stacked-bar{{display:flex;flex:none;flex-direction:column-reverse;width:100%;height:300px;background:#eef2f6;border-bottom:1px solid #94a3b8}} .taxonomy-segment{{width:100%}} .taxonomy-sample-label{{position:absolute;top:308px;left:16px;width:115px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;transform:rotate(55deg);transform-origin:left top;color:#475467;font-size:11px}} #taxonomy-explorer-legend{{margin:8px 0 24px;min-width:0;padding-left:0}}
-/* Keep plotted images white and use parchment only for explanatory notes. */
-.figure-scroll{{overflow-x:auto;margin:18px 0;border:1px solid var(--line);border-radius:10px;background:white}} .report-figure{{display:block;max-width:none;height:auto;margin:0}} code{{white-space:normal;word-break:break-word}} .note{{background:var(--wash);border-left:4px solid var(--accent);padding:12px 15px;border-radius:6px;color:var(--ink)}}
-/* Warm the quality-profile cards without altering their plotted bands or median lines. */
-.quality-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,430px),1fr));gap:16px;margin:18px 0}} .quality-card{{margin:0;border:1px solid var(--line);border-radius:12px;background:var(--paper);padding:14px;overflow-x:auto}} .quality-card figcaption{{font-weight:750;margin:0 0 8px;color:var(--ink)}} .quality-profile{{display:block;min-width:620px;background:white;border-radius:8px}}
-details{{border:1px solid var(--line);border-radius:10px;margin:12px 0;padding:0 14px 14px}} summary{{cursor:pointer;font-weight:750;padding:14px 0}}
+.explorer-controls{{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:14px;margin:22px 0 12px}}
+.explorer-control label{{display:block;margin-bottom:5px;color:var(--ink);font-size:13px;font-weight:750}}
+/* Position the inset decorative arrow relative to the existing control container. */
+.explorer-control{{position:relative}}
+/* Leave space for the arrow while retaining keyboard-accessible native selects. */
+.explorer-control select{{appearance:none;width:100%;padding:10px 38px 10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);font:inherit}}
+/* Let clicks pass through the arrow to the select beneath it. */
+.explorer-control::after{{content:"▾";position:absolute;right:14px;bottom:11px;pointer-events:none;color:#24543d}}
+.explorer-control select:disabled{{background:var(--wash);color:var(--muted)}} .small-muted{{color:var(--muted);font-size:13px}}
+.taxonomy-chart{{display:grid;grid-template-columns:54px minmax(0,1fr);margin:20px 0 8px;border:1px solid var(--line);border-radius:10px;background:var(--plot-background);overflow:hidden}}
+.taxonomy-y-axis{{position:relative;height:450px;border-right:1px solid var(--line);background:transparent;z-index:1}}
+.taxonomy-y-axis span{{position:absolute;right:8px;transform:translateY(-50%);color:var(--muted);font-size:12px}}
+/* Keep grid lines but let the shared translucent surface show through. */
+.taxonomy-scroll{{overflow-x:auto;min-width:0;padding:20px 18px;background:repeating-linear-gradient(to bottom,transparent 0,transparent 74px,var(--line) 75px)}}
+.taxonomy-stacked-plot{{display:flex;align-items:flex-start;gap:5px;height:410px;min-width:max-content}} .taxonomy-sample-column{{position:relative;display:flex;flex-direction:column;justify-content:flex-start;width:34px;height:400px}} .taxonomy-stacked-bar{{display:flex;flex:none;flex-direction:column-reverse;width:100%;height:300px;background:#eef2f6;border-bottom:1px solid #94a3b8}} .taxonomy-segment{{width:100%}} .taxonomy-sample-label{{position:absolute;top:308px;left:16px;width:115px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;transform:rotate(55deg);transform-origin:left top;color:var(--muted);font-size:11px}} #taxonomy-explorer-legend{{margin:8px 0 24px;min-width:0;padding-left:0}}
+/* Centre the selected metadata field beneath the bars, outside sideways scrolling. */
+.taxonomy-x-axis-title{{grid-column:2;text-align:center;padding:8px 12px;overflow-wrap:anywhere}}
+/* Match fallback image surrounds without fading or modifying historical PNG pixels. */
+.figure-scroll{{overflow-x:auto;margin:18px 0;border:1px solid var(--line);border-radius:10px;background:var(--plot-background)}} .report-figure{{display:block;max-width:none;height:auto;margin:0}} code{{white-space:normal;word-break:break-word}} .note{{background:var(--wash);border-left:4px solid var(--accent);padding:12px 15px;border-radius:6px;color:var(--ink)}}
+/* Put the quality profiles on the same translucent surface as the count charts. */
+.quality-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,430px),1fr));gap:16px;margin:18px 0}} .quality-card{{margin:0;border:1px solid var(--line);border-radius:12px;background:var(--paper);padding:14px;overflow-x:auto}} .quality-card figcaption{{font-weight:750;margin:0 0 8px;color:var(--ink)}} .quality-profile{{display:block;min-width:620px;background:var(--plot-background);border-radius:8px}}
+details{{border:1px solid var(--line);border-radius:10px;margin:12px 0;padding:0 14px 14px}}
+/* The details padding already insets this custom arrow 14px from the outer border. */
+summary{{position:relative;list-style:none;cursor:pointer;font-weight:750;padding:14px 28px 14px 0}}
+/* Hide the native marker so browsers do not draw a second arrow. */
+summary::-webkit-details-marker{{display:none}}
+/* Rotate only the arrow, keeping the full heading clickable. */
+summary::after{{content:"▾";position:absolute;right:0;top:50%;transform:translateY(-50%);color:#24543d;pointer-events:none}}
+details[open]>summary::after{{transform:translateY(-50%) rotate(180deg)}}
 /* Keep filter actions separate from bar sorting and usable on narrow screens. */
 .taxonomy-filter-actions{{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0}}
 /* Use native buttons with sufficient contrast and a comfortable click target. */
@@ -1784,7 +1860,7 @@ details{{border:1px solid var(--line);border-radius:10px;margin:12px 0;padding:0
   <p>Each bar is the sample's combined non-chimeric 16S and 18S abundance after DADA2 filtering, denoising, 16S pair merging, and chimera removal.</p>
   {post_dada2_chart}
 </section>
-<section id="composition"><div class="eyebrow">Basic bar plots</div><h2>Domain composition by sample</h2><p>Bars show relative abundance from <code>{esc(abundance_column)}</code>. Hover over a segment for its value.</p>{domain_chart}<h3>Sequence assignments</h3><p>This breakdown uses the pipeline's <code>Sequence_Type</code> field and taxonomy labels. The broad 16S total includes prokaryotic, chloroplast, and mitochondrial 16S. The figure itself uses mutually exclusive categories, so each sequence count appears in only one bar.</p><div class="cards"><div class="card"><strong>{fmt_count(total_16s)}</strong><span>total 16S</span></div><div class="card"><strong>{fmt_count(assignment_totals['Eukaryotic 18S'])}</strong><span>eukaryotic 18S</span></div><div class="card"><strong>{fmt_count(assignment_totals['Chloroplast 16S'])}</strong><span>chloroplast 16S</span></div><div class="card"><strong>{fmt_count(assignment_totals['Mitochondrial 16S'])}</strong><span>mitochondrial 16S</span></div><div class="card"><strong>{fmt_count(assignment_totals['Unassigned'])}</strong><span>unassigned</span></div></div>{assignment_chart}<h3>Sequence-assignment counts</h3><div class="table-wrap"><table><thead><tr><th>Assignment</th><th>Sequence abundance</th><th>Share of all assignments</th></tr></thead><tbody>{assignment_rows}</tbody></table></div><p class="note"><strong>Total 16S</strong> is a summary row and overlaps its three 16S subcategories; the remaining rows and the figure are mutually exclusive.</p></section>
+<section id="composition"><div class="eyebrow">Basic bar plots</div><h2>Domain composition by sample</h2><p>Bars show relative abundance from <code>{esc(abundance_column)}</code>. Hover over a segment for its value.</p><p class="small-muted">Only Bacteria, Eukaryota and Archaea are displayed. Percentages use all assignments; other assignments remain in the exported data.</p>{domain_chart}<h3>Sequence assignments</h3><p>This breakdown uses the pipeline's <code>Sequence_Type</code> field and taxonomy labels. The broad 16S total includes prokaryotic, chloroplast, and mitochondrial 16S. The figure itself uses mutually exclusive categories, so each sequence count appears in only one bar.</p><div class="cards"><div class="card"><strong>{fmt_count(total_16s)}</strong><span>total 16S</span></div><div class="card"><strong>{fmt_count(assignment_totals['Eukaryotic 18S'])}</strong><span>eukaryotic 18S</span></div><div class="card"><strong>{fmt_count(assignment_totals['Chloroplast 16S'])}</strong><span>chloroplast 16S</span></div><div class="card"><strong>{fmt_count(assignment_totals['Mitochondrial 16S'])}</strong><span>mitochondrial 16S</span></div><div class="card"><strong>{fmt_count(assignment_totals['Unassigned'])}</strong><span>unassigned</span></div></div>{assignment_chart}<h3>Sequence-assignment counts</h3><div class="table-wrap"><table><thead><tr><th>Assignment</th><th>Sequence abundance</th><th>Share of all assignments</th></tr></thead><tbody>{assignment_rows}</tbody></table></div><p class="note"><strong>Total 16S</strong> is a summary row and overlaps its three 16S subcategories; the remaining rows and the figure are mutually exclusive.</p></section>
 <section id="taxa">
   <div class="eyebrow">Taxonomic summary</div><h2>Interactive taxonomy bar plot</h2>
   <p>This QIIME 2-style view shows each sample as a 100% stacked bar. Choose a taxonomy level, then sort by SampleID or available sample-sheet metadata such as Condition, Latitude, Longitude or Depth. Counts use <code>{esc(abundance_column)}</code>; hover over a segment for its taxon, rank, relative abundance, count and sample metadata.</p>
@@ -1811,7 +1887,7 @@ details{{border:1px solid var(--line);border-radius:10px;margin:12px 0;padding:0
   <!-- Explain structural missing ranks instead of implying classification failure. -->
   <p class="small-muted">Kingdom and Phylum are SILVA ranks; Supergroup, Division and Subdivision are PR2 ranks. Other databases do not supply these ranks, so their counts appear as unassigned at that level. ProPortal ecotypes are a separate annotation, not a universal rank.</p>
   <p id="taxonomy-filter-summary" class="small-muted" aria-live="polite"></p>
-  <p class="small-muted">Filters affect only this taxonomy view, not the whole-run quality-control summaries or exported data. Sample labels remain below the bars; metadata numbers sort numerically, with blanks last.</p>
+  <p class="small-muted">Filters affect only this taxonomy view, not the whole-run quality-control summaries or exported data. Labels below the bars show the selected sorting field; sample IDs remain available on hover. Metadata numbers sort numerically, with blanks last.</p>
   <div id="taxonomy-explorer-chart" class="taxonomy-chart" aria-label="Interactive relative taxonomic abundance by sample"></div>
   <!-- Every observed taxon is retained; colour repetition is stated explicitly. -->
   <p class="small-muted">The scrollable key includes every taxon observed in the selected samples. Colours repeat in a fixed order when the palette is exhausted; hover text and names distinguish taxa sharing a colour. No rare taxa are combined into Other.</p>
