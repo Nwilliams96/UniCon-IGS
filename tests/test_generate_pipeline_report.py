@@ -1,5 +1,7 @@
 import base64
 import csv
+import copy
+import hashlib
 import importlib.util
 import json
 import re
@@ -73,7 +75,108 @@ def render_interaction_fixture(root):
     return output
 
 
+def render_nucleomorph_fixture(root):
+    """Render mixed domains with original nucleomorph labels in read-only input tables."""
+    root = Path(root)
+    root.mkdir(parents=True, exist_ok=True)
+    paths = {}
+
+    def table(name, headers, rows):
+        path = root / (name + ".tsv")
+        with path.open("w", encoding="utf-8", newline="") as handle:
+            writer = csv.writer(handle, delimiter="\t", lineterminator="\n")
+            writer.writerow(headers)
+            writer.writerows(rows)
+        paths[name] = path
+
+    table("samples", ["sample", "Latitude"], [["001", "-39.5"]])
+    table("split_summary", ["sample", "prok_seqs_split", "euk_seqs_split"], [["001", 60, 40]])
+    table("stats16s", ["sample-id", "input", "filtered", "denoised", "merged", "non-chimeric"],
+          [["001", 60, 55, 50, 45, 40]])
+    table("stats18s", ["sample-id", "input", "filtered", "denoised", "non-chimeric"],
+          [["001", 40, 35, 30, 25]])
+    records = [
+        ("Bacteria", "Bacterial phylum", "Prokaryotic_16S", 60),
+        ("Eukaryota", "Eukaryote phylum", "Eukaryote_18S", 20),
+        ("Eukaryota:nucl", "Nucleomorph lineage:nucl", "Unassigned", 5),
+        ("Archaea", "Archaeal phylum", "Prokaryotic_16S", 10),
+        ("Unassigned", "", "Unassigned", 5),
+    ]
+    headers = ["SampleID", "ASV_hash", "Domain", "Phylum", "Sequence_Type", "Corrected_Sequence_Counts"]
+    rows = [["001", f"A{index}", *record] for index, record in enumerate(records)]
+    table("long_data", headers, rows)
+    table("corrected", headers + ["isd_1_recovery_ratio", "Copies_BP_recovery_ratio"],
+          [row + [.5, row[-1] * 10] for row in rows])
+    paths["internal_standard_table"] = [paths["corrected"]]
+    paths["cutadapt_qc"] = []
+    output = root / "report.html"
+    REPORT.render_report({"projectName": "Nucleomorph synthetic fixture", "intstds": ["BP"]}, paths, output)
+    return output, paths
+
+
 class GeneratePipelineReportTests(unittest.TestCase):
+    def test_report_domain_groups_only_nucleomorph_labels(self):
+        for value in ("Eukaryota:nucl", " eUkArYoTa:NuCl "):
+            self.assertEqual(REPORT.report_domain(value), "Eukaryota")
+        for value in ("Bacteria", "Archaea", "Eukaryota:plas", "Eukaryota:mito", "Eukaryota"):
+            self.assertEqual(REPORT.report_domain(value), value)
+        for value in (None, "", "   "):
+            self.assertEqual(REPORT.report_domain(value), "Unassigned")
+
+    def test_taxonomy_grouping_changes_domain_only_and_never_mutates_rows(self):
+        row = {"Domain": "Eukaryota:nucl", "Phylum": "Lineage:nucl", "Genus": "Genus:nucl"}
+        original = copy.deepcopy(row)
+        self.assertEqual(REPORT.taxonomy_value(row, "Domain"), "Eukaryota")
+        self.assertEqual(REPORT.taxonomy_value(row, "Phylum"), "Lineage:nucl")
+        self.assertEqual(REPORT.taxonomy_value(row, "Genus"), "Genus:nucl")
+        self.assertEqual(REPORT.taxonomy_label(row), "Lineage:nucl")
+        self.assertEqual(REPORT.taxonomy_label({"Domain": "Eukaryota:nucl"}), "Eukaryota")
+        self.assertEqual(REPORT.taxonomy_value({}, "Domain"), "Unassigned at Domain")
+        self.assertEqual(row, original)
+
+    def test_nucleomorph_assignment_preserves_explicit_marker_and_mitochondrial_priority(self):
+        for marker in (None, "", "Unassigned", "Eukaryote_18S"):
+            row = {"Domain": " Eukaryota:nucl ", "Sequence_Type": marker}
+            original = dict(row)
+            self.assertEqual(REPORT.sequence_assignment(row), "Eukaryotic 18S")
+            self.assertEqual(row, original)
+        for row, expected in (
+            ({"Sequence_Type": "Prokaryotic_16S"}, "Prokaryotic 16S"),
+            ({"Sequence_Type": "Chloroplast_16S"}, "Chloroplast 16S"),
+            ({"Class": "Mitochondria", "Sequence_Type": "Unassigned"}, "Mitochondrial 16S"),
+            ({"plastid_16S_rRNA": "yes"}, "Chloroplast 16S"),
+            ({"plastid_16S_rRNA": "yes", "Sequence_Type": "Unassigned"}, "Unassigned"),
+        ):
+            self.assertEqual(REPORT.sequence_assignment(dict(Domain="Eukaryota:nucl", **row)), expected)
+        self.assertEqual(REPORT.sequence_assignment({"Domain": "Unassigned", "Sequence_Type": "Unassigned"}), "Unassigned")
+
+    def test_every_domain_report_view_combines_nucleomorph_abundance_and_keeps_input_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            output, paths = render_nucleomorph_fixture(tmp)
+            before = {key: hashlib.sha256(path.read_bytes()).hexdigest()
+                      for key, path in paths.items() if isinstance(path, Path)}
+            # A second render reads exactly the same source files, including original labels.
+            REPORT.render_report({"projectName": "Nucleomorph synthetic fixture", "intstds": ["BP"]}, paths, output)
+            rendered = output.read_text()
+            after = {key: hashlib.sha256(path.read_bytes()).hexdigest()
+                     for key, path in paths.items() if isinstance(path, Path)}
+            self.assertEqual(before, after)
+            self.assertIn("Eukaryota:nucl", paths["long_data"].read_text())
+            self.assertIn("Eukaryota:nucl", paths["corrected"].read_text())
+        payload = json.loads(re.search(r'id="taxonomy-explorer-data">(.*?)</script>', rendered, re.S).group(1))
+        domains = payload["samples"]["001"]["taxonomy"]["Domain"]
+        self.assertEqual(domains, {"Bacteria": 60, "Eukaryota": 25, "Archaea": 10, "Unassigned at Domain": 5})
+        self.assertEqual(sum(domains.values()), 100)
+        self.assertEqual(payload["samples"]["001"]["taxonomy"]["Phylum"]["Nucleomorph lineage:nucl"], 5)
+        composition = re.search(r'<section id="composition">(.*?)</section>', rendered, re.S).group(1)
+        self.assertIn("001 — Eukaryota: 25.0%", composition)
+        self.assertNotIn("001 — Eukaryota:nucl", composition)
+        self.assertIn("Eukaryotic 18S: 25", composition)
+        self.assertIn("Unassigned: 5", composition)
+        self.assertIn("001 — Eukaryota: 250</title>", rendered)  # Sum absolute ISD-corrected copies too.
+        self.assertNotIn("001 — Eukaryota:nucl:", rendered)
+        self.assertIn("Eukaryota includes nucleomorph assignments", rendered)
+
     def test_read_bars_are_solid_forest_green_with_thin_black_borders(self):
         chart = REPORT.svg_sample_read_counts({"001": 120, "002": 60}, ["001", "002"], "Reads")
         bars = ET.fromstring("<root>" + chart + "</root>").findall(".//rect")
@@ -87,7 +190,7 @@ class GeneratePipelineReportTests(unittest.TestCase):
 
     def test_domain_display_hides_other_labels_without_changing_denominators_or_inputs(self):
         values = {"001": {"Bacteria": 60, "Eukaryota": 20, "Archaea": 10,
-                          "Unassigned": 5, "Eukaryota:nucl": 5}}
+                          "Unassigned": 5, "Other-domain": 5}}
         original = json.loads(json.dumps(values))
         chart = REPORT.svg_composition(values, "Domains")
         root = ET.fromstring("<root>" + chart + "</root>")

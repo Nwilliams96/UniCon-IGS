@@ -442,6 +442,17 @@ def normalize_sample_id(value):
     return str(value).strip().replace("_", "-") if value is not None else ""
 
 
+# Group nucleomorph assignments with their biological domain for display only.
+def report_domain(value):
+    # Clean the label without modifying the original table row.
+    domain = str(value or "").strip()
+    # Nucleomorph sequences belong within Eukaryota, not a separate domain.
+    if domain.casefold() == "eukaryota:nucl":
+        return "Eukaryota"
+    # Preserve other domains and explicitly identify missing assignments.
+    return domain or "Unassigned"
+
+
 def read_tsv(path):
     with open(path, encoding="utf-8-sig", newline="") as handle:
         return list(csv.DictReader(handle, delimiter="\t"))
@@ -1050,7 +1061,8 @@ def internal_standard_html(config, corrected_rows):
     }
     for row in corrected_rows:
         sample = normalize_sample_id(row.get("SampleID"))
-        domain = (row.get("Domain") or "Unassigned").strip() or "Unassigned"
+        # Combine ordinary and nucleomorph Eukaryota before summing plotted copies.
+        domain = report_domain(row.get("Domain"))
         if domain == "Unassigned":
             continue
         for column in copy_columns:
@@ -1075,14 +1087,16 @@ def internal_standard_html(config, corrected_rows):
 
 def taxonomy_label(row):
     for key in ("Phylum", "Division", "Supergroup", "Class", "Domain"):
-        value = (row.get(key) or "").strip()
+        # Group only the Domain fallback; retain all lower-rank reference labels.
+        value = report_domain(row.get(key)) if key == "Domain" else (row.get(key) or "").strip()
         if value and value.lower() not in {"na", "nan", "unassigned"}:
             return value
     return "Unassigned"
 
 
 def taxonomy_value(row, rank):
-    value = str(row.get(rank) or "").strip()
+    # Combine Domain labels in the explorer without rewriting lower-rank taxonomy.
+    value = report_domain(row.get(rank)) if rank == "Domain" else str(row.get(rank) or "").strip()
     if value and value.lower() not in {"na", "nan", "none", "unassigned"}:
         return value
     return f"Unassigned at {rank.replace('_', ' ')}"
@@ -1191,11 +1205,20 @@ def sequence_assignment(row):
         "eukaryotic18s": "Eukaryotic 18S",
         "unassigned": "Unassigned",
     }
+    # Recognize nucleomorph 18S despite a generic unassigned sequence-type label.
+    if (
+        sequence_type == "unassigned"
+        and str(row.get("Domain") or "").strip().casefold() == "eukaryota:nucl"
+        and str(row.get("plastid_16S_rRNA") or "").strip().casefold() != "yes"
+    ):
+        # Change only the report category, not the source classification.
+        return "Eukaryotic 18S"
     if sequence_type in mapping:
         return mapping[sequence_type]
 
     plastid = str(row.get("plastid_16S_rRNA") or "").strip().lower()
-    domain = str(row.get("Domain") or "").strip().lower()
+    # Apply the same Domain grouping when no explicit marker assignment is available.
+    domain = report_domain(row.get("Domain")).lower()
     if plastid == "yes":
         return "Chloroplast 16S"
     if domain in {"bacteria", "archaea"}:
@@ -1513,7 +1536,8 @@ def render_report(config, paths, output_path):
         abundance = number(row.get(abundance_column)) or 0
         if not sample or abundance <= 0:
             continue
-        domain = (row.get("Domain") or "Unassigned").strip() or "Unassigned"
+        # Combine ordinary and nucleomorph Eukaryota before summing plotted abundance.
+        domain = report_domain(row.get("Domain"))
         assignment = sequence_assignment(row)
         taxon = taxonomy_label(row)
         domains_by_sample[sample][domain] += abundance
@@ -1860,9 +1884,14 @@ details[open]>summary::after{{transform:translateY(-50%) rotate(180deg)}}
   <p>Each bar is the sample's combined non-chimeric 16S and 18S abundance after DADA2 filtering, denoising, 16S pair merging, and chimera removal.</p>
   {post_dada2_chart}
 </section>
-<section id="composition"><div class="eyebrow">Basic bar plots</div><h2>Domain composition by sample</h2><p>Bars show relative abundance from <code>{esc(abundance_column)}</code>. Hover over a segment for its value.</p><p class="small-muted">Only Bacteria, Eukaryota and Archaea are displayed. Percentages use all assignments; other assignments remain in the exported data.</p>{domain_chart}<h3>Sequence assignments</h3><p>This breakdown uses the pipeline's <code>Sequence_Type</code> field and taxonomy labels. The broad 16S total includes prokaryotic, chloroplast, and mitochondrial 16S. The figure itself uses mutually exclusive categories, so each sequence count appears in only one bar.</p><div class="cards"><div class="card"><strong>{fmt_count(total_16s)}</strong><span>total 16S</span></div><div class="card"><strong>{fmt_count(assignment_totals['Eukaryotic 18S'])}</strong><span>eukaryotic 18S</span></div><div class="card"><strong>{fmt_count(assignment_totals['Chloroplast 16S'])}</strong><span>chloroplast 16S</span></div><div class="card"><strong>{fmt_count(assignment_totals['Mitochondrial 16S'])}</strong><span>mitochondrial 16S</span></div><div class="card"><strong>{fmt_count(assignment_totals['Unassigned'])}</strong><span>unassigned</span></div></div>{assignment_chart}<h3>Sequence-assignment counts</h3><div class="table-wrap"><table><thead><tr><th>Assignment</th><th>Sequence abundance</th><th>Share of all assignments</th></tr></thead><tbody>{assignment_rows}</tbody></table></div><p class="note"><strong>Total 16S</strong> is a summary row and overlaps its three 16S subcategories; the remaining rows and the figure are mutually exclusive.</p></section>
+<section id="composition"><div class="eyebrow">Basic bar plots</div><h2>Domain composition by sample</h2>
+<p>Bars show relative abundance from <code>{esc(abundance_column)}</code>. Hover over a segment for its value.</p>
+<p class="small-muted">Only Bacteria, Eukaryota and Archaea are displayed. Percentages use all assignments; other assignments remain in the exported data. Eukaryota includes nucleomorph assignments (<code>Eukaryota:nucl</code>) throughout the report's Domain plots; original taxonomy labels remain unchanged in exported tables.</p>
+{domain_chart}<h3>Sequence assignments</h3>
+<p>This breakdown uses the pipeline's <code>Sequence_Type</code> field and taxonomy labels. Nucleomorph assignments with a generic unassigned sequence type are displayed as eukaryotic 18S unless a plastid flag is present. The broad 16S total includes prokaryotic, chloroplast, and mitochondrial 16S. The figure itself uses mutually exclusive categories, so each sequence count appears in only one bar.</p><div class="cards"><div class="card"><strong>{fmt_count(total_16s)}</strong><span>total 16S</span></div><div class="card"><strong>{fmt_count(assignment_totals['Eukaryotic 18S'])}</strong><span>eukaryotic 18S</span></div><div class="card"><strong>{fmt_count(assignment_totals['Chloroplast 16S'])}</strong><span>chloroplast 16S</span></div><div class="card"><strong>{fmt_count(assignment_totals['Mitochondrial 16S'])}</strong><span>mitochondrial 16S</span></div><div class="card"><strong>{fmt_count(assignment_totals['Unassigned'])}</strong><span>unassigned</span></div></div>{assignment_chart}<h3>Sequence-assignment counts</h3><div class="table-wrap"><table><thead><tr><th>Assignment</th><th>Sequence abundance</th><th>Share of all assignments</th></tr></thead><tbody>{assignment_rows}</tbody></table></div><p class="note"><strong>Total 16S</strong> is a summary row and overlaps its three 16S subcategories; the remaining rows and the figure are mutually exclusive.</p></section>
 <section id="taxa">
   <div class="eyebrow">Taxonomic summary</div><h2>Interactive taxonomy bar plot</h2>
+  <p class="small-muted">At Domain level, nucleomorph assignments are included in Eukaryota. Lower-rank taxonomy and exported tables retain their original labels.</p>
   <p>This QIIME 2-style view shows each sample as a 100% stacked bar. Choose a taxonomy level, then sort by SampleID or available sample-sheet metadata such as Condition, Latitude, Longitude or Depth. Counts use <code>{esc(abundance_column)}</code>; hover over a segment for its taxon, rank, relative abundance, count and sample metadata.</p>
   <!-- Changing sort order never changes the separately stored sample filters. -->
   <div class="explorer-controls">
