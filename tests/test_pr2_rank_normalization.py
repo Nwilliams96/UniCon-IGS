@@ -54,6 +54,8 @@ class Pr2RankNormalizationTests(unittest.TestCase):
                 # The export fixture is already complete. Only the actual
                 # normalization rule and its real script may execute here.
                 (root / "Snakefile").write_text(
+                    # This isolated rule fixture does not include common.smk.
+                    'LOG_DIR = "fixture-logs"\n\n'
                     f'rule {exported}:\n    output:\n        {raw_path!r}\n'
                     '    shell:\n        "exit 99"\n\n'
                     f'rule {normalization}:' + body

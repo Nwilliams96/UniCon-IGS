@@ -22,7 +22,7 @@ rule cutadapt: #Defines the Snakemake rule that performs paired-end primer trimm
         #These settings control primer matching and removal of untrimmed read pairs.
         extra="--no-indels --pair-filter=any --error-rate=0.2 --discard-untrimmed", #Disallows indels, permits a 20% mismatch rate and discards a pair when either mate lacks its primer.
     log:
-        "logs/00-trimming/{sample}.log", #Records Cutadapt’s standard-error messages separately for each sample.
+        LOG_DIR + "/00-trimming/{sample}.log", #Records Cutadapt’s standard-error messages separately for each sample.
     threads: 4  #Allows Cutadapt to use four processing threads.
     conda:
         "https://raw.githubusercontent.com/snakemake/snakemake-wrappers/v7.0.0/bio/cutadapt/pe/environment.yaml" # Uses the pinned paired-end Cutadapt wrapper environment definition.
@@ -40,7 +40,7 @@ rule compress_trimmed_output_r1: #Defines the Snakemake rule that compresses the
         "results/00-trimmed/{sample}.1.fastq.gz", #Writes the BGZIP-compressed R1 FASTQ for the sample.
     threads: 1 #Allocates one processing thread to compression.
     log:
-        "logs/bgzip/{sample}_compress-trimmed-r1.log", #Records BGZIP messages and errors separately for each sample’s R1 file.
+        LOG_DIR + "/bgzip/{sample}_compress-trimmed-r1.log", #Records BGZIP messages and errors separately for each sample’s R1 file.
     wrapper:
         "v7.2.0/bio/bgzip" #Runs the pinned BGZIP wrapper from Snakemake Wrappers version 7.2.0.
 
@@ -52,6 +52,6 @@ rule compress_trimmed_output_r2: #Defines the Snakemake rule that compresses the
         "results/00-trimmed/{sample}.2.fastq.gz" #Writes the BGZIP-compressed R2 FASTQ for the sample.
     threads: 1 #Allocates one processing thread to compression.
     log:
-        "logs/bgzip/{sample}_compress-trimmed-r2.log", #Records BGZIP messages and errors separately for each sample’s R2 file.
+        LOG_DIR + "/bgzip/{sample}_compress-trimmed-r2.log", #Records BGZIP messages and errors separately for each sample’s R2 file.
     wrapper:
         "v7.2.0/bio/bgzip" #Runs the pinned BGZIP wrapper from Snakemake Wrappers version 7.2.0.

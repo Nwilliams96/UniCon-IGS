@@ -12,6 +12,6 @@ rule prepare_long_data: #Defines the rule that prepares merged ASV data for down
     conda:
         "../envs/r-tidyverse-2.0.0.yml" #Provides R and tidyverse packages for reshaping and combining the data.
     log:
-        "logs/04-formatting/prepare_long_data.log" #Specifies the log file for this formatting step.
+        LOG_DIR + "/04-formatting/prepare_long_data.log" #Specifies the log file for this formatting step.
     script:
         "../scripts/long-data-preparation.R" #Reshapes the abundance tables and extracts the ASV sequences from the FASTA files.

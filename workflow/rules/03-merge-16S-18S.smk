@@ -16,6 +16,6 @@ rule merge_prok_euk: #Defines the rule that merges and corrects the prokaryotic 
     conda:
         "../envs/r-tidyverse-2.0.0.yml" #Provides R, tidyverse and data.table for the merge and correction calculations.
     log:
-        "logs/03-merging/merge_prok_euk.log" #Declares the log path available to the R helper.
+        LOG_DIR + "/03-merging/merge_prok_euk.log" #Declares the log path available to the R helper.
     script:
         "../scripts/correct_16S_18S_ASV-snakemake-v1.R" #Calculates the correction factors, merges the tables, adds ProPortal annotations and writes all four outputs.

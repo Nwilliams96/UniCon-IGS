@@ -17,7 +17,7 @@ rule bbsplit_prok_euk: #Defines the Snakemake rule that performs reference-based
         #Reserving 64 GB prevents multiple memory-heavy split jobs from running simultaneously within the 128 GB CARC allocation.
         mem_mb=64000, # Requests 64,000 MB of memory for this rule.
     log:
-        "logs/01-splitting/{sample}_bbsplit.log" #Records mapping and splitting messages separately for each sample.
+        LOG_DIR + "/01-splitting/{sample}_bbsplit.log" #Records mapping and splitting messages separately for each sample.
     shell:
         "bbsplit.sh threads={threads} usequality=f qtrim=f minratio=0.30 minid=0.30 pairedonly=f path={input.database} in={input.r1} in2={input.r2} out_SILVA_132_PROK.cdhit95pc={output.prok} out_SILVA_132_and_PR2_EUK.cdhit95pc={output.euk} 2>&1 | tee -a {log}" # Maps without quality-based seed selection or trimming, uses permissive 0.30 mapping thresholds, allows mapping without requiring both mates to map and appends all messages to the log.
         

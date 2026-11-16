@@ -8,6 +8,8 @@ results/
 Results-Export/
 *-Results-Export/
 logs/
+# Keep project-named runtime logs out of the public source repository.
+*-logs/
 log/
 slurm-*.out
 *.err

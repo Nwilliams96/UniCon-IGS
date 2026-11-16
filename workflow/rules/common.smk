@@ -213,6 +213,8 @@ if not re.fullmatch(r"[A-Za-z0-9._-]+", PROJECT_NAME): # Checks that the entire 
         "projectName may contain only letters, numbers, periods, underscores, "
         "and hyphens"
     ) #Starts an error that stops Snakemake if the name is invalid.
+# Keep workflow logs identifiable when folders from different projects are downloaded.
+LOG_DIR = PROJECT_NAME + "-logs"
 RESULTS_EXPORT_DIR = PROJECT_NAME + "-Results-Export" # Constructs the export-folder name. For example, AMT29 becomes AMT29-Results-Export.
 RESULTS_LONG_DATA = ( # Begins choosing which main long-format table to export.
     ISD_FILTERED_LONG_TABLE # Selects the table with detected internal-standard ASVs removed when internal-standard processing is enabled (see if statement below).

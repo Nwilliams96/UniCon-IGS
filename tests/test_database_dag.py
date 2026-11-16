@@ -93,6 +93,11 @@ class DatabaseDagTests(unittest.TestCase):
                     self.set_mode(root, config, "SILVA", silva_mode)
                     self.set_mode(root, config, "PR2", pr2_mode)
                     output = self.dry_run(root, config)
+                    # Every selected database route uses the same project log root.
+                    declared_logs = re.findall(r"^\s+log: (.+)$", output, re.M)
+                    self.assertTrue(declared_logs, output)
+                    self.assertTrue(all(path.startswith(config["projectName"] + "-logs/")
+                                        for path in declared_logs), declared_logs)
                     for family, mode in (("SILVA", silva_mode), ("PR2", pr2_mode)):
                         download = "rule download_" + family + "_classifier:"
                         train = "rule train_classifier:" if family == "SILVA" else "rule train_classifier_pr2:"
@@ -100,6 +105,25 @@ class DatabaseDagTests(unittest.TestCase):
                         self.assertEqual(download in output, mode == "download", output)
                         self.assertEqual(train in output, mode == "train", output)
                         self.assertEqual(extract in output, mode == "train", output)
+
+    def test_fastq_and_bbsplit_preparation_logs_use_the_configured_project_name(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config = self.setup_project(root)
+            config["projectName"] = "AMT29.log-test"
+            config["use_preexisting_bbsplit_database"] = False
+            for family in ("SILVA", "PR2"):
+                self.set_mode(root, config, family, "existing")
+            raw = Path(config["rawdatadir"])
+            raw.mkdir()
+            for ending in (config["R1file_ending"], config["R2file_ending"]):
+                (raw / ("001" + ending)).touch()  # Dry-run fixtures; never processed.
+            output = self.dry_run(root, config, ("results/00-trimmed/001.1.fastq", "prepare_bbsplit_db"))
+            declared_logs = re.findall(r"^\s+log: (.+)$", output, re.M)
+            self.assertEqual(len(declared_logs), 4, output)
+            self.assertTrue(all(path.startswith("AMT29.log-test-logs/") for path in declared_logs), declared_logs)
+            self.assertIn("AMT29.log-test-logs/00-trimming/001.log", output)
+            self.assertIn("AMT29.log-test-logs/bbsplit_db_prep.log", output)
 
     def test_named_qiime_environment_parses_the_real_workflow_without_a_yaml_path(self):
         with tempfile.TemporaryDirectory() as tmp:

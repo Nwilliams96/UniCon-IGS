@@ -95,6 +95,6 @@ if USE_INTERNAL_STANDARDS: #Includes the following definitions and rules only wh
         conda:
             "../envs/r-tidyverse-2.0.0.yml" #Provides R, tidyverse and the plotting dependencies.
         log:
-            "logs/05-internal-std-correction/prepare_long_data_corrected.log" #Specifies the log file for correction and plotting messages.
+            LOG_DIR + "/05-internal-std-correction/prepare_long_data_corrected.log" #Specifies the log file for correction and plotting messages.
         script:
             "../scripts/correct-w-isds-snakemake-v5.R" #Calculates recovery-based corrections, filters standard ASVs and creates the tables and figures.

@@ -340,13 +340,18 @@ or provide allocation settings appropriate for their scheduler.
 From the project directory, submit the CARC job with:
 
 ```bash
-sbatch run_snakemake_USC_CARC_only.sh
+bash run_snakemake_USC_CARC_only.sh
 ```
 
 The script reads `projectName` from `config/config.yml`, submits itself through
-Slurm, and labels the queue entry and log files as `<projectName>`. Calling
-the file with `sbatch` still works, but the log filename initially uses the
-generic `pipeline` label because Slurm opens it before the script runs.
+Slurm, and labels the queue entry and log files as `<projectName>`. Both workflow
+rule logs and the submitted job's `.out`/`.err` files are stored under
+`<projectName>-logs/`, retaining their existing subfolders and filenames.
+Use the `bash` command above so this directory exists before Slurm opens its
+output files. Direct `sbatch` submission retains the legacy `logs/` bootstrap
+output paths and requires that directory to exist before submission; rule logs
+still use `<projectName>-logs/`. Existing log folders are not moved or deleted.
+Snakemake's internal execution log remains under `.snakemake/log/`.
 Before starting Snakemake, the CARC runner also detects config files whose
 timestamps are ahead of the compute-node clock and resets only those timestamps.
 This prevents clock-skew failures after moving ZIP packages between computers.

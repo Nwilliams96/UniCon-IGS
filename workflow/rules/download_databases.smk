@@ -29,7 +29,7 @@ rule download_prok_db: #Defines a Snakemake rule named download_prok_db.
     output:
         DATABASE_PREFIX + "bbsplit-db/SILVA_132_PROK.cdhit95pc.fasta", # Constructs the downloaded FASTA’s destination beneath the configured database root. Kept as a persistent shared reference so Snakemake does not automatically delete it after indexing.
     log:
-        "logs/bbsplit_prok_db_download.log", #Specifies where the helper records download messages and errors
+        LOG_DIR + "/bbsplit_prok_db_download.log", #Specifies where the helper records download messages and errors
     params:
         url="https://osf.io/eahds/download", #Provides the OSF download address. The helper follows redirects to retrieve the file.
         checksum="46683398d8859aeef635fff49112c4d6453d4ebd70bf8b9fee006cb5b84273b1", # Stores the expected file fingerprint.
@@ -48,7 +48,7 @@ rule download_euk_db: #Defines a Snakemake rule named download_euk_db.
     output:
         DATABASE_PREFIX + "bbsplit-db/SILVA_132_and_PR2_EUK.cdhit95pc.fasta", # Constructs the destination path for the combined SILVA/PR2 eukaryotic reference. Kept as a persistent shared reference so Snakemake does not automatically delete it after indexing.
     log:
-        "logs/bbsplit_euk_db_download.log",
+        LOG_DIR + "/bbsplit_euk_db_download.log", # Store this rule's log under the project-named directory.
     params:
         url="https://osf.io/eux4r/download", #Provides the OSF download URL. The helper follows redirects to retrieve the reference.
         checksum="c4a396035271db516a0054f1d750d3081ca5a11831b44756e91590a79ed0f109", # Stores the expected fingerprint of the reference file.

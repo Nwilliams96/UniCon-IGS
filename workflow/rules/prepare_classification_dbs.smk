@@ -51,7 +51,7 @@ if SILVA_DB["mode"] == "download": # Includes the following rule only when SILVA
         conda:
             config["qiime2version"] #Selects the configured QIIME environment, providing the QIIME command needed for artifact validation.
         log:
-            "logs/SILVA_classifier_download.log" # Specifies where download and validation messages are recorded.
+            LOG_DIR + "/SILVA_classifier_download.log" # Specifies where download and validation messages are recorded.
         script:
             "../scripts/download_verified_reference.py" # Runs the verified downloader relative to this rule file.
 
@@ -67,7 +67,7 @@ if PR2_DB["mode"] == "download": # Includes the following rule only when PR2’s
         conda:
             config["qiime2version"] #Selects the configured QIIME environment.
         log:
-            "logs/PR2_classifier_download.log" # Specifies where download and validation messages are recorded.
+            LOG_DIR + "/PR2_classifier_download.log" # Specifies where download and validation messages are recorded.
         script:
             "../scripts/download_verified_reference.py" # Runs the verified downloader relative to this rule file.
 
@@ -82,7 +82,7 @@ if RUN_SILVA_SPECIES_MATCHING: # Includes the following rule only when SILVA spe
             url=SILVA_SPECIES_REFERENCE_URL, # Passes the SILVA 144 species-reference download URL defined in common.smk.
             md5=SILVA_SPECIES_REFERENCE_MD5 # Passes the expected MD5 checksum. The helper uses it to verify that the file’s contents match the intended reference.
         log:
-            "logs/SILVA_144_species_reference_download.log" # Specifies where download messages are recorded.
+            LOG_DIR + "/SILVA_144_species_reference_download.log" # Specifies where download messages are recorded.
         script:
             "../scripts/download_verified_reference.py" # Runs the verified downloader relative to this rule file. It handles locking, reuse of a checksum-matching file, downloading and safe saving.
 
@@ -111,7 +111,7 @@ if SILVA_DB["mode"] == "train": # Runs this configuration only in training mode.
         conda:
             config["qiime2version"] #Uses the configured QIIME 2 environment containing RESCRIPt.
         log:
-            "logs/SILVA_classification_db_prep/01-download-reference.log" # Records the command’s standard output and error messages.
+            LOG_DIR + "/SILVA_classification_db_prep/01-download-reference.log" # Records the command’s standard output and error messages.
         shell:
             "qiime rescript get-silva-data --p-version {params.version:q} " # Starts RESCRIPt’s SILVA downloader and supplies the shell-quoted release number.
             "--p-target SSURef_NR99 --p-ranks {params.ranks:q} " # Requests the NR99 small-subunit reference and the configured taxonomy ranks.
@@ -128,7 +128,7 @@ if SILVA_DB["mode"] == "train": # Runs this configuration only in training mode.
         conda:
             config["qiime2version"] #Uses the configured QIIME 2 environment containing RESCRIPt.
         log:
-            "logs/SILVA_classification_db_prep/02-reverse-transcribe.log" # Records messages and errors from the conversion command.
+            LOG_DIR + "/SILVA_classification_db_prep/02-reverse-transcribe.log" # Records messages and errors from the conversion command.
         shell:
             "qiime rescript reverse-transcribe --i-rna-sequences {input:q} " # Runs RESCRIPt’s reverse-transcription action on the shell-quoted RNA artifact.
             "--o-dna-sequences {output:q} > {log:q} 2>&1" # Writes the DNA artifact and redirects both output streams to the log.
@@ -143,7 +143,7 @@ if SILVA_DB["mode"] == "train": # Runs this configuration only in training mode.
         conda:
             config["qiime2version"] #Uses the configured QIIME 2 environment containing RESCRIPt.
         log:
-            "logs/SILVA_classification_db_prep/03-cull.log" # Records messages and errors from sequence screening.
+            LOG_DIR + "/SILVA_classification_db_prep/03-cull.log" # Records messages and errors from sequence screening.
         shell:
             "qiime rescript cull-seqs --i-sequences {input:q} " # Runs RESCRIPt’s sequence-culling action on the shell-quoted input artifact.
             "--p-num-degenerates 5 --p-homopolymer-length 8 " # Removes sequences with at least five degenerate bases or a homopolymer of at least eight bases.
@@ -161,7 +161,7 @@ if SILVA_DB["mode"] == "train": # Runs this configuration only in training mode.
         conda:
             config["qiime2version"] #Uses the configured QIIME 2 environment containing RESCRIPt.
         log:
-            "logs/SILVA_classification_db_prep/04-filter-length.log" # Records messages and errors from taxon-specific length filtering.
+            LOG_DIR + "/SILVA_classification_db_prep/04-filter-length.log" # Records messages and errors from taxon-specific length filtering.
         shell:
             "qiime rescript filter-seqs-length-by-taxon " # Starts RESCRIPt’s taxon-aware sequence-length filtering action.
             "--i-sequences {input.sequences:q} --i-taxonomy {input.taxonomy:q} " # Supplies the shell-quoted sequence and taxonomy artifacts.
@@ -183,7 +183,7 @@ if SILVA_DB["mode"] == "train": # Runs this configuration only in training mode.
         conda:
             config["qiime2version"] #Uses the configured QIIME 2 environment containing RESCRIPt.
         log:
-            "logs/SILVA_classification_db_prep/05-dereplicate-full-reference.log" # Records messages and errors from full-reference dereplication.
+            LOG_DIR + "/SILVA_classification_db_prep/05-dereplicate-full-reference.log" # Records messages and errors from full-reference dereplication.
         shell:
             "qiime rescript dereplicate --i-sequences {input.sequences:q} " # Starts RESCRIPt dereplication using the shell-quoted sequence artifact.
             "--i-taxa {input.taxonomy:q} --p-mode uniq --p-rank-handles {params.ranks:q} " # Supplies taxonomy, retains each unique taxonomic affiliation and backfills the configured ranks.
@@ -205,7 +205,7 @@ if SILVA_DB["mode"] == "train": # Runs this configuration only in training mode.
             config["qiime2version"] #Uses the configured QIIME 2 environment containing q2-feature-classifier.
         threads: 8 # Requests up to eight workers; Snakemake can reduce this to match available cores.
         log:
-            "logs/SILVA_classification_db_prep/06-extract-primer-region.log" # Records messages and errors from SILVA primer-region extraction.
+            LOG_DIR + "/SILVA_classification_db_prep/06-extract-primer-region.log" # Records messages and errors from SILVA primer-region extraction.
         shell:
             "qiime feature-classifier extract-reads --i-sequences {input:q} " # Runs q2-feature-classifier’s read-extraction action on the SILVA reference.
             "--p-f-primer {params.fwdPrimer:q} --p-r-primer {params.revPrimer:q} " # Supplies the shell-quoted forward and reverse primers.
@@ -226,7 +226,7 @@ if SILVA_DB["mode"] == "train": # Runs this configuration only in training mode.
         conda:
             config["qiime2version"] #Uses the configured QIIME 2 environment containing RESCRIPt.
         log:
-            "logs/SILVA_classification_db_prep/07-dereplicate-primer-region.log" # Records messages and errors from amplicon dereplication.
+            LOG_DIR + "/SILVA_classification_db_prep/07-dereplicate-primer-region.log" # Records messages and errors from amplicon dereplication.
         shell:
             "qiime rescript dereplicate --i-sequences {input.sequences:q} " # Starts RESCRIPt dereplication using the extracted SILVA sequences.
             "--i-taxa {input.taxonomy:q} --p-mode uniq --p-rank-handles {params.ranks:q} " # Retains unique taxonomic affiliations and backfills the configured ranks.
@@ -246,7 +246,7 @@ if SILVA_DB["mode"] == "train": # Runs this configuration only in training mode.
             mem_mb=110000, # Declares 110,000 MB for resource-aware scheduling; does not increase Slurm's memory allocation.
             runtime=720 # Declares an estimated runtime of 720 minutes; does not extend or enforce Slurm's time limit.
         log:
-            "logs/SILVA_classification_db_prep/08-train-classifier.log" # Records messages and errors from SILVA classifier training.
+            LOG_DIR + "/SILVA_classification_db_prep/08-train-classifier.log" # Records messages and errors from SILVA classifier training.
         shell:
             "qiime feature-classifier fit-classifier-naive-bayes " # Starts q2-feature-classifier’s naïve Bayes training action.
             "--i-reference-reads {input.sequences:q} " # Supplies the selected shell-quoted reference sequences.
@@ -280,7 +280,7 @@ if PR2_DB["mode"] == "train": # Includes the following PR2 preparation rules onl
         conda:
             config["qiime2version"] #Uses the configured QIIME 2 environment containing RESCRIPt.
         log:
-            "logs/PR2_classification_db_prep/00-download-reference.log" # Records messages and errors from the PR2 download.
+            LOG_DIR + "/PR2_classification_db_prep/00-download-reference.log" # Records messages and errors from the PR2 download.
         shell:
             "qiime rescript get-pr2-data --p-version {params.version:q} " # Runs RESCRIPt’s PR2 downloader with the shell-quoted release number.
             "--p-ranks domain supergroup division subdivision class order family genus species " # Requests PR2’s complete ordered nine-rank taxonomy.
@@ -296,7 +296,7 @@ if PR2_DB["mode"] == "train": # Includes the following PR2 preparation rules onl
         conda:
             config["qiime2version"] #Uses the configured QIIME 2 environment containing RESCRIPt.
         log:
-            "logs/PR2_classification_db_prep/01-normalize-taxonomy.log" # Records messages and errors from taxonomy normalization.
+            LOG_DIR + "/PR2_classification_db_prep/01-normalize-taxonomy.log" # Records messages and errors from taxonomy normalization.
         shell:
             #The raw multiline command runs RESCRIPt’s taxonomy editor.
             #The regular expression matches PR2 rank prefixes at the start of a label or after a semicolon.
@@ -316,7 +316,7 @@ if PR2_DB["mode"] == "train": # Includes the following PR2 preparation rules onl
         output:
             temp(PR2_CULLED_QZA) # Stores sequences that pass screening and marks the artifact as temporary.
         log:
-            "logs/PR2_classification_db_prep/05-cull-sequences.log" # Records messages and errors from PR2 sequence screening.
+            LOG_DIR + "/PR2_classification_db_prep/05-cull-sequences.log" # Records messages and errors from PR2 sequence screening.
         priority: 46 #Assigns this rule Snakemake scheduling priority 46.
         conda:
             config["qiime2version"] #Uses the configured QIIME 2 environment containing RESCRIPt.
@@ -334,7 +334,7 @@ if PR2_DB["mode"] == "train": # Includes the following PR2 preparation rules onl
             derepseqs=temp(PR2_DEREP_QZA), # Stores the dereplicated full-length sequences and marks the artifact as temporary.
             dereptaxa=temp(PR2_DEREP_TAXONOMY_QZA) # Stores their corresponding taxonomy and marks the artifact as temporary.
         log:
-            "logs/PR2_classification_db_prep/06-dereplicate-full-reference.log" # Records messages and errors from full-length PR2 dereplication.
+            LOG_DIR + "/PR2_classification_db_prep/06-dereplicate-full-reference.log" # Records messages and errors from full-length PR2 dereplication.
         priority: 45 #Assigns this rule Snakemake scheduling priority 45.
         conda:
             config["qiime2version"] #Uses the configured QIIME 2 environment containing RESCRIPt.
@@ -355,7 +355,7 @@ if PR2_DB["mode"] == "train": # Includes the following PR2 preparation rules onl
             fwdPrimer=config["fwdPrimer"], #Uses the configured forward-primer sequence.
             revPrimer=config["revPrimer"] #Uses the configured reverse-primer sequence.
         log:
-            "logs/PR2_classification_db_prep/07-extract-primer-region.log" # Records messages and errors from PR2 primer-region extraction.
+            LOG_DIR + "/PR2_classification_db_prep/07-extract-primer-region.log" # Records messages and errors from PR2 primer-region extraction.
         priority: 44 #Assigns this rule Snakemake scheduling priority 44.
         conda:
             config["qiime2version"] #Uses the configured QIIME 2 environment containing q2-feature-classifier.
@@ -376,7 +376,7 @@ if PR2_DB["mode"] == "train": # Includes the following PR2 preparation rules onl
             slicedDNAdereplicated=temp(PR2_SLICED_DEREP_QZA), # Stores the dereplicated simulated amplicons and marks the artifact as temporary.
             dereplicatedTaxaSliced=temp(PR2_SLICED_TAXONOMY_QZA) # Stores their corresponding taxonomy and marks the artifact as temporary.
         log:
-            "logs/PR2_classification_db_prep/08-dereplicate-primer-region.log" # Records messages and errors from PR2 amplicon dereplication.
+            LOG_DIR + "/PR2_classification_db_prep/08-dereplicate-primer-region.log" # Records messages and errors from PR2 amplicon dereplication.
         priority: 43 #Assigns this rule Snakemake scheduling priority 43.
         conda:
             config["qiime2version"] #Uses the configured QIIME 2 environment containing RESCRIPt.
@@ -394,7 +394,7 @@ if PR2_DB["mode"] == "train": # Includes the following PR2 preparation rules onl
         output:
             temp(PR2_STAGED_CLASSIFIER) # Writes the classifier to its project-local staging path and marks it as temporary.
         log:
-            "logs/PR2_classification_db_prep/09-train-classifier.log" # Records messages and errors from PR2 classifier training.
+            LOG_DIR + "/PR2_classification_db_prep/09-train-classifier.log" # Records messages and errors from PR2 classifier training.
         priority: 42 # Assigns this rule Snakemake scheduling priority 42.
         conda:
             config["qiime2version"] #Uses the configured QIIME 2 environment containing q2-feature-classifier.
@@ -424,7 +424,7 @@ rule ensure_silva_classifier: # Defines the readiness rule required by downstrea
     conda:
         config["qiime2version"] #Uses the configured QIIME 2 environment for artifact validation.
     log:
-        "logs/SILVA_classification_db_prep/validate-and-save.log" # Records classifier validation, reuse and saving messages.
+        LOG_DIR + "/SILVA_classification_db_prep/validate-and-save.log" # Records classifier validation, reuse and saving messages.
     script:
         "../scripts/save_classifier.py" # Validates the classifier and safely saves it using locking and atomic replacement.
 
@@ -444,7 +444,7 @@ rule ensure_pr2_classifier: # Defines the readiness rule required by downstream 
     conda:
         config["qiime2version"] #Uses the configured QIIME 2 environment for artifact validation.
     log:
-        "logs/PR2_classification_db_prep/10-validate-and-save.log" # Records classifier validation, reuse and saving messages.
+        LOG_DIR + "/PR2_classification_db_prep/10-validate-and-save.log" # Records classifier validation, reuse and saving messages.
     resources:
         mem_mb=2000, # Declares 2,000 MB for resource-aware scheduling; does not increase Slurm's memory allocation.
         runtime=30 # Declares an estimated runtime of 30 minutes; does not extend or enforce Slurm's time limit.

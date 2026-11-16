@@ -8,7 +8,7 @@ rule prepare_bbsplit_db: #Defines Snakemake rule.
     conda:
         "../envs/bbmap.yaml" #Chooses the BBMap/BBTools environment definition relative to this rule.
     log:
-        "logs/bbsplit_db_prep.log" #Identifies log location
+        LOG_DIR + "/bbsplit_db_prep.log" #Identifies log location
     threads: 8 # Requests up to eight threads. Snakemake may reduce this number to fit the available cores.
     resources:
         mem_mb=64000, # Declares a memory requirement of 64,000 MB—approximately 64 GB.

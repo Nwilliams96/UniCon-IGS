@@ -17,7 +17,11 @@ class CarcEfficiencyTests(unittest.TestCase):
         runner = (ROOT / "run_snakemake_USC_CARC_only.sh").read_text(encoding="utf-8")
         self.assertIn("read_project_name()", runner)
         self.assertIn('JOB_LABEL="${PROJECT_NAME}"', runner)
-        self.assertIn('sbatch --job-name="${JOB_LABEL}" "$0" "$@"', runner)
+        self.assertIn('sbatch --job-name="${JOB_LABEL}"', runner)
+        self.assertIn('--output="${LOG_DIR}/%x_%j.out"', runner)
+        self.assertIn('--error="${LOG_DIR}/%x_%j.err"', runner)
+        self.assertIn('"$0" "$@"', runner)
+        # Direct sbatch submission keeps the pre-existing bootstrap paths.
         self.assertIn("#SBATCH --output=logs/%x_%j.out", runner)
         self.assertIn("#SBATCH --error=logs/%x_%j.err", runner)
 

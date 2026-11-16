@@ -64,7 +64,7 @@ rule denoise_prok_dada2: #Defines the standard prokaryotic denoising rule.
     resources:
         mem_mb=96000, #Requests 96,000 MB of memory for error learning and ASV inference.
     log:
-        "logs/02-denoise-and-export-prok/03-DADA2/DADA2.stderrout" #Records the canonical DADA2 command output and errors.
+        LOG_DIR + "/02-denoise-and-export-prok/03-DADA2/DADA2.stderrout" #Records the canonical DADA2 command output and errors.
     script:
         "../scripts/P03-DADA2.sh" #Runs paired-end DADA2 with unmerged-pair retention disabled.
 
@@ -98,7 +98,7 @@ rule denoise_prok_dada2_with_unmerged: #Defines the experimental retained-pair d
     resources:
         mem_mb=96000, #Requests 96,000 MB of memory.
     log:
-        "logs/02-denoise-and-export-prok/03_DADA2_with_unmerged/DADA2.stderrout" #Records output and errors from the retained-pair run.
+        LOG_DIR + "/02-denoise-and-export-prok/03_DADA2_with_unmerged/DADA2.stderrout" #Records output and errors from the retained-pair run.
     script:
         "../scripts/P03-DADA2.sh" #Runs paired-end DADA2 with unmerged-pair retention enabled.
 
@@ -119,7 +119,7 @@ rule classify_unmerged_16S_with_SILVA: #Defines SILVA classification for the sup
     resources:
         mem_mb=64000, #Requests 64,000 MB of memory for SILVA classification.
     log:
-        "logs/02-denoise-and-export-prok/11-unmerged-SILVA.log" #Declares the SILVA classification log path.
+        LOG_DIR + "/02-denoise-and-export-prok/11-unmerged-SILVA.log" #Declares the SILVA classification log path.
     script:
         "../scripts/P05-classify-eASVs.sh" #Runs QIIME 2's sklearn taxonomy classifier.
 
@@ -139,7 +139,7 @@ rule classify_unmerged_16S_with_PR2: #Defines PR2 classification for the supplem
     resources:
         mem_mb=110000, #Requests 110,000 MB of memory for PR2 classification.
     log:
-        "logs/02-denoise-and-export-prok/11-unmerged-PR2.log" #Declares the PR2 classification log path.
+        LOG_DIR + "/02-denoise-and-export-prok/11-unmerged-PR2.log" #Declares the PR2 classification log path.
     script:
         "../scripts/P05-classify-eASVs.sh" #Runs QIIME 2's sklearn taxonomy classifier.
 
@@ -155,7 +155,7 @@ rule export_unmerged_16S_retained_table: #Defines the retained-run feature-table
     conda:
         config["qiime2version"]
     log:
-        "logs/02-denoise-and-export-prok/11-export-retained-table.log" #Records messages and errors from the QIIME 2 export.
+        LOG_DIR + "/02-denoise-and-export-prok/11-export-retained-table.log" #Records messages and errors from the QIIME 2 export.
     shell:
         "mkdir -p {params.export_dir:q} && " #Creates the project-local export directory if needed.
         "qiime tools export --input-path {input:q} --output-path {params.export_dir:q} " #Exports the QIIME 2 feature table as BIOM.
@@ -173,7 +173,7 @@ rule export_unmerged_16S_standard_table: #Defines the canonical feature-table ex
     conda:
         config["qiime2version"]
     log:
-        "logs/02-denoise-and-export-prok/11-export-standard-table.log" #Records messages and errors from the QIIME 2 export.
+        LOG_DIR + "/02-denoise-and-export-prok/11-export-standard-table.log" #Records messages and errors from the QIIME 2 export.
     shell:
         "mkdir -p {params.export_dir:q} && " #Creates the project-local export directory if needed.
         "qiime tools export --input-path {input:q} --output-path {params.export_dir:q} " #Exports the canonical QIIME 2 table as BIOM.
@@ -191,7 +191,7 @@ rule export_unmerged_16S_sequences: #Defines the retained-run representative-seq
     conda:
         config["qiime2version"]
     log:
-        "logs/02-denoise-and-export-prok/11-export-sequences.log" #Records messages and errors from the sequence export.
+        LOG_DIR + "/02-denoise-and-export-prok/11-export-sequences.log" #Records messages and errors from the sequence export.
     shell:
         "mkdir -p {params.export_dir:q} && " #Creates the project-local export directory if needed.
         "qiime tools export --input-path {input:q} --output-path {params.export_dir:q} " #Exports the linked representative features as FASTA.
@@ -209,7 +209,7 @@ rule export_unmerged_16S_SILVA_taxonomy: #Defines the supplemental SILVA taxonom
     conda:
         config["qiime2version"]
     log:
-        "logs/02-denoise-and-export-prok/11-export-SILVA-taxonomy.log" #Records messages and errors from the SILVA taxonomy export.
+        LOG_DIR + "/02-denoise-and-export-prok/11-export-SILVA-taxonomy.log" #Records messages and errors from the SILVA taxonomy export.
     shell:
         "mkdir -p {params.export_dir:q} && " #Creates the project-local export directory if needed.
         "qiime tools export --input-path {input:q} --output-path {params.export_dir:q} " #Exports the SILVA classification as taxonomy TSV.
@@ -227,7 +227,7 @@ rule export_unmerged_16S_PR2_taxonomy: #Defines the supplemental raw PR2 taxonom
     conda:
         config["qiime2version"]
     log:
-        "logs/02-denoise-and-export-prok/11-export-PR2-taxonomy.log" #Records messages and errors from the PR2 taxonomy export.
+        LOG_DIR + "/02-denoise-and-export-prok/11-export-PR2-taxonomy.log" #Records messages and errors from the PR2 taxonomy export.
     shell:
         "mkdir -p {params.export_dir:q} && " #Creates the project-local export directory if needed.
         "qiime tools export --input-path {input:q} --output-path {params.export_dir:q} " #Exports the raw PR2 classification as taxonomy TSV.
@@ -241,7 +241,7 @@ rule normalize_unmerged_16S_PR2_rank_prefixes:
     output:
         normalized=temp(".snakemake/classification-exports/unmerged-16S/PR2/taxonomy.tsv") #Stores the prefix-normalized taxonomy temporarily for the supplemental export.
     log:
-        "logs/02-denoise-and-export-prok/11-normalize-PR2-rank-prefixes.log"
+        LOG_DIR + "/02-denoise-and-export-prok/11-normalize-PR2-rank-prefixes.log" # Store this rule's log under the project-named directory.
     #The helper changes only the Taxon column because RESCRIPt's edit-taxonomy action would discard the Confidence column.
     script:
         "../scripts/normalize_pr2_taxonomy.py" #Removes recognized PR2 rank markers without parsing or rewriting the remaining TSV fields.
@@ -256,7 +256,7 @@ rule convert_unmerged_16S_retained_biom:
     conda:
         config["qiime2version"]
     log:
-        "logs/02-denoise-and-export-prok/11-convert-retained-biom.log"
+        LOG_DIR + "/02-denoise-and-export-prok/11-convert-retained-biom.log" # Store this rule's log under the project-named directory.
     shell:
         "biom convert -i {input.biom:q} -o {output:q} --to-tsv " #Converts the shell-quoted retained BIOM table to tab-separated text.
         "> {log:q} 2>&1" #Records command output and errors in the rule log.
@@ -271,7 +271,7 @@ rule convert_unmerged_16S_standard_biom:
     conda:
         config["qiime2version"]
     log:
-        "logs/02-denoise-and-export-prok/11-convert-standard-biom.log"
+        LOG_DIR + "/02-denoise-and-export-prok/11-convert-standard-biom.log" # Store this rule's log under the project-named directory.
     shell:
         "biom convert -i {input.biom:q} -o {output:q} --to-tsv " #Converts the shell-quoted canonical BIOM table to tab-separated text.
         "> {log:q} 2>&1" #Records command output and errors in the rule log.
@@ -306,7 +306,7 @@ rule export_DADA2_results:
     conda:
         config["qiime2version"]
     log:
-        "logs/02-denoise-and-export-prok/04_export_DADA2_results/DADA2_export.stderrout"
+        LOG_DIR + "/02-denoise-and-export-prok/04_export_DADA2_results/DADA2_export.stderrout" # Store this rule's log under the project-named directory.
     script:
         "../scripts/P04-export-DADA2-results.sh" #Exports QIIME 2 artifacts, converts the feature table to TSV and archives timestamped copies.
 
@@ -326,7 +326,7 @@ rule classify_ASVs:
     resources:
         mem_mb=64000, #Requests 64,000 MB of memory for SILVA classification.
     log:
-        "logs/02-denoise-and-export-prok/05-classify-ASVs.log"
+        LOG_DIR + "/02-denoise-and-export-prok/05-classify-ASVs.log" # Store this rule's log under the project-named directory.
     script:
         "../scripts/P05-classify-eASVs.sh" #Runs QIIME 2's scikit-learn taxonomy classifier.
 
@@ -342,7 +342,7 @@ rule create_sample_metadata_file:
     conda:
         config["qiime2version"]
     log:
-        "logs/02-denoise-and-export-prok/06-make-sample-metadata-file.log"
+        LOG_DIR + "/02-denoise-and-export-prok/06-make-sample-metadata-file.log" # Store this rule's log under the project-named directory.
     script:
         "../scripts/P06-make-sample-metadata-file.py" #Normalizes sample IDs, removes manifest paths and joins the four input tables by sample ID.
 
@@ -377,7 +377,7 @@ rule classify_all_16S_with_PR2:
     conda:
         config["qiime2version"]
     log:
-        "logs/02-denoise-and-export-prok/09-classify-all-16S-with-PR2.log"
+        LOG_DIR + "/02-denoise-and-export-prok/09-classify-all-16S-with-PR2.log" # Store this rule's log under the project-named directory.
     script:
         "../scripts/P09a-classify-all-16S-with-PR2.sh" #Runs `classify-sklearn` at confidence 0.0 so the resolver can apply the configured acceptance threshold itself.
 
@@ -393,7 +393,7 @@ rule export_SILVA_taxonomy_for_plastid_resolution:
     conda:
         config["qiime2version"]
     log:
-        "logs/02-denoise-and-export-prok/09-export-SILVA-taxonomy.log"
+        LOG_DIR + "/02-denoise-and-export-prok/09-export-SILVA-taxonomy.log" # Store this rule's log under the project-named directory.
     shell:
         "mkdir -p {params.export_dir:q} && " #Creates the project-local export directory if necessary.
         "qiime tools export --input-path {input:q} --output-path {params.export_dir:q} " #Exports the shell-quoted SILVA taxonomy artifact.
@@ -411,7 +411,7 @@ rule export_PR2_taxonomy_for_plastid_resolution:
     conda:
         config["qiime2version"]
     log:
-        "logs/02-denoise-and-export-prok/09-export-PR2-taxonomy.log"
+        LOG_DIR + "/02-denoise-and-export-prok/09-export-PR2-taxonomy.log" # Store this rule's log under the project-named directory.
     shell:
         "mkdir -p {params.export_dir:q} && " #Creates the project-local export directory if necessary.
         "qiime tools export --input-path {input:q} --output-path {params.export_dir:q} " #Exports the shell-quoted PR2 taxonomy artifact.
@@ -425,7 +425,7 @@ rule normalize_canonical_16S_PR2_rank_prefixes:
     output:
         normalized=temp(".snakemake/classification-exports/canonical-16S/PR2/taxonomy.tsv") #Stores the prefix-normalized table temporarily for reconciliation.
     log:
-        "logs/02-denoise-and-export-prok/09-normalize-PR2-rank-prefixes.log"
+        LOG_DIR + "/02-denoise-and-export-prok/09-normalize-PR2-rank-prefixes.log" # Store this rule's log under the project-named directory.
     #Only prefixed PR2 rank notation changes; feature IDs, confidence values and all other columns remain intact.
     script:
         "../scripts/normalize_pr2_taxonomy.py" #Normalizes the Taxon column without applying the later plastid-confidence threshold.
@@ -455,7 +455,7 @@ rule import_resolved_PR2_plastid_taxonomy:
     conda:
         config["qiime2version"]
     log:
-        "logs/02-denoise-and-export-prok/09-import-resolved-taxonomy.log"
+        LOG_DIR + "/02-denoise-and-export-prok/09-import-resolved-taxonomy.log" # Store this rule's log under the project-named directory.
     shell:
         "qiime tools import --type 'FeatureData[Taxonomy]' " #Selects the QIIME 2 taxonomy artifact type.
         "--input-format TSVTaxonomyFormat --input-path {input:q} " #Reads the shell-quoted reconciled TSV using QIIME 2's taxonomy format.
@@ -540,7 +540,7 @@ rule assign_SILVA_species:
         mem_mb=110000, # Reserves 110 GB while the reference is queried in batches.
         runtime=360, # Requests up to 360 minutes.
     log:
-        "logs/02-denoise-and-export-prok/10-assign-SILVA-species.log"
+        LOG_DIR + "/02-denoise-and-export-prok/10-assign-SILVA-species.log" # Store this rule's log under the project-named directory.
     script:
         "../scripts/assign_silva_species.R" # Stages the reference locally, performs exact matching and appends genus-consistent species labels.
 

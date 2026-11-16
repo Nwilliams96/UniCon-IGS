@@ -43,15 +43,22 @@ if [[ -z "${PROJECT_NAME}" ]]; then
 fi
 JOB_LABEL="${PROJECT_NAME}"
 JOB_LABEL="$(printf '%s' "${JOB_LABEL}" | sed 's/[^A-Za-z0-9._-]/_/g')"
+# Use the detected project label for the log-directory name.
+LOG_DIR="${JOB_LABEL}-logs"
 
 # Slurm reads #SBATCH directives before running this file, so it cannot obtain
 # projectName from config.yml at that stage. When launched with bash, submit this
 # same script with the detected project name. Inside the allocation, continue to
 # the workflow normally.
 if [[ -z "${SLURM_JOB_ID:-}" ]]; then
-  mkdir -p logs
+  # Create the project directory before Slurm opens its output files.
+  mkdir -p "${LOG_DIR}"
   echo "Submitting CARC job ${JOB_LABEL}"
-  sbatch --job-name="${JOB_LABEL}" "$0" "$@"
+  # Submit with project-specific job and log paths; retain any target arguments.
+  sbatch --job-name="${JOB_LABEL}" \
+    --output="${LOG_DIR}/%x_%j.out" \
+    --error="${LOG_DIR}/%x_%j.err" \
+    "$0" "$@"
   exit $?
 fi
 
@@ -62,7 +69,8 @@ scontrol update JobId="${SLURM_JOB_ID}" JobName="${JOB_LABEL}" || true
 
 echo "Started at: $(date) on $(hostname)"
 echo "Project: ${PROJECT_NAME}; Slurm job: ${JOB_LABEL} (${SLURM_JOB_ID})"
-mkdir -p logs
+# Keep rule and Slurm logs together when the job starts on its compute node.
+mkdir -p "${LOG_DIR}"
 
 # ZIP files transferred from another computer can preserve timestamps that are
 # ahead of the CARC compute-node clock. Snakemake rejects outputs created before

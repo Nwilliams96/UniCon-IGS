@@ -41,6 +41,6 @@ rule generate_pipeline_report: #Defines the pipeline-report generation rule.
     output:
         html="results/07-report/" + config["projectName"] + ".pipeline-report.html" #Writes the self-contained project report.
     log:
-        "logs/06-report/generate_pipeline_report.log" #Records report-generation messages and errors.
+        LOG_DIR + "/06-report/generate_pipeline_report.log" #Records report-generation messages and errors.
     script:
         "../scripts/generate_pipeline_report.py" #Reads the collected results and renders the final HTML report.

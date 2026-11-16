@@ -51,7 +51,7 @@ rule bbduk_cut_reads:
     conda:
         "../envs/bbmap.yaml"
     log:
-        "logs/euk-trimming.{sample}.log"
+        LOG_DIR + "/euk-trimming.{sample}.log" # Store this rule's log under the project-named directory.
     script:
         "../scripts/E03-bbduk-cut-reads.sh" #Runs BBDuk separately on both mates and uses BBTools Repair to restore synchronized pairing.
 
@@ -68,7 +68,7 @@ rule fuse_trimmed_euk_seqs:
     conda:
         "../envs/bbmap.yaml"
     log:
-        "logs/euk-fusing.{sample}.log"
+        LOG_DIR + "/euk-fusing.{sample}.log" # Store this rule's log under the project-named directory.
     script:
         "../scripts/E04-fuse-EUKs-withoutNs.sh" #Uses BBTools Fuse with `fusepairs=t` and `pad=0`, so no `N` spacer is added.
 
@@ -132,7 +132,7 @@ rule denoise_euk_dada2:
     resources:
         mem_mb=96000, # Requests 96,000 MB of memory for error learning and ASV inference.
     log:
-        "logs/02-denoise-and-export-euk/08-DADA2/DADA2.stderrout"
+        LOG_DIR + "/02-denoise-and-export-euk/08-DADA2/DADA2.stderrout" # Store this rule's log under the project-named directory.
     script:
         "../scripts/E08-DADA2.sh" #Runs `qiime dada2 denoise-single` without additional left trimming or fixed-length truncation.
 
@@ -150,7 +150,7 @@ rule export_DADA2_results_euk:
     conda:
         config["qiime2version"]
     log:
-        "logs/02-denoise-and-export-euk/09_export_DADA2_results/DADA2_export.stderrout"
+        LOG_DIR + "/02-denoise-and-export-euk/09_export_DADA2_results/DADA2_export.stderrout" # Store this rule's log under the project-named directory.
     script:
         "../scripts/E09-export-DADA2-results.sh" #Exports QIIME 2 artifacts, converts the BIOM table to TSV and archives timestamped copies.
 
@@ -174,7 +174,7 @@ rule classify_18S_with_PR2:
     resources:
         mem_mb=110000, # Requests 110,000 MB of memory for PR2 classification.
     log:
-        "logs/02-denoise-and-export-euk/10-classify-18S-with-PR2.log"
+        LOG_DIR + "/02-denoise-and-export-euk/10-classify-18S-with-PR2.log" # Store this rule's log under the project-named directory.
     script:
         "../scripts/E10-classify-18S-with-PR2.sh" # Runs `classify-sklearn`, normalizes whitespace through metadata export and reimports the taxonomy.
 
@@ -190,7 +190,7 @@ rule export_18S_PR2_taxonomy_for_normalization:
     conda:
         config["qiime2version"]
     log:
-        "logs/02-denoise-and-export-euk/10-export-PR2-taxonomy.log"
+        LOG_DIR + "/02-denoise-and-export-euk/10-export-PR2-taxonomy.log" # Store this rule's log under the project-named directory.
     shell:
         "mkdir -p {params.export_dir:q} && " # Creates the project-local export directory if necessary.
         "qiime tools export --input-path {input:q} --output-path {params.export_dir:q} " # Exports the PR2 taxonomy artifact as TSV.
@@ -204,7 +204,7 @@ rule normalize_18S_PR2_rank_prefixes:
     output:
         normalized=temp(".snakemake/classification-exports/18S/PR2/taxonomy.tsv") # Stores the prefix-normalized taxonomy table temporarily.
     log:
-        "logs/02-denoise-and-export-euk/10-normalize-PR2-rank-prefixes.log"
+        LOG_DIR + "/02-denoise-and-export-euk/10-normalize-PR2-rank-prefixes.log" # Store this rule's log under the project-named directory.
     #RESCRIPt’s `edit-taxonomy` action returns only a taxonomy Series and would drop classification confidence.
     #The dedicated TSV transformation therefore modifies only the taxonomy text.
     script:
@@ -220,7 +220,7 @@ rule import_normalized_18S_PR2_taxonomy:
     conda:
         config["qiime2version"]
     log:
-        "logs/02-denoise-and-export-euk/10-import-normalized-PR2-taxonomy.log"
+        LOG_DIR + "/02-denoise-and-export-euk/10-import-normalized-PR2-taxonomy.log" # Store this rule's log under the project-named directory.
     shell:
         "qiime tools import --type 'FeatureData[Taxonomy]' " # Selects the QIIME 2 taxonomy artifact type.
         "--input-path {input:q} --output-path {output.normalized:q} " # Imports the normalized TSV into the declared artifact.
@@ -239,7 +239,7 @@ rule create_sample_metadata_file_euk:
     conda:
         config["qiime2version"]
     log:
-        "logs/02-denoise-and-export-euk/11-make-sample-metadata-file.log"
+        LOG_DIR + "/02-denoise-and-export-euk/11-make-sample-metadata-file.log" # Store this rule's log under the project-named directory.
     script:
         "../scripts/E11-make-sample-metadata-file.py" #Normalizes underscores to hyphens and merges the tables by sample identifier.
 
