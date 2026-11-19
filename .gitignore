@@ -28,6 +28,10 @@ reads/
 databases/
 database/
 resources/
+# Track only the bundled scheduling profile, not downloaded resources.
+!/workflow/profiles/resources/
+/workflow/profiles/resources/*
+!/workflow/profiles/resources/config.yaml
 *.qza
 *.qzv
 *.biom

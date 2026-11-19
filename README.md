@@ -330,10 +330,15 @@ with merged ASVs and automatic combination could double-count features.
 ## USC CARC runner
 
 `run_snakemake_USC_CARC_only.sh` requests one eight-core, 128 GB CARC job and
-passes the Slurm CPU count to Snakemake. BBSplit, DADA2, and taxonomic
-classification use up to eight threads. Snakemake also receives a 120 GB
-memory budget, while the memory-heavy BBSplit and DADA2 rules declare realistic
-per-job requirements so they are not run concurrently on the same allocation.
+passes the Slurm CPU count to Snakemake. Its `#SBATCH` CPU, memory and walltime
+settings remain editable; selecting a profile does not change the allocation
+or an already queued job. The launcher reads the actual single-node memory
+allocation from `SLURM_MEM_PER_NODE`, or from `SLURM_MEM_PER_CPU` multiplied by
+the allocated CPU count. It converts MiB to decimal MB and gives Snakemake 90%
+of that allocation as its scheduling budget, replacing the fixed 120 GB value.
+If neither variable supplies a positive memory amount, the launcher produces
+an explanation rather than guessing a budget. This includes `--mem=0` alone;
+request a positive memory amount.
 This USC-specific script is optional; other systems can use `run_snakemake.sh`
 or provide allocation settings appropriate for their scheduler.
 
@@ -362,8 +367,55 @@ contending for Conda metadata in `~/.conda/pkgs` and avoids stale-file-handle
 failures during environment creation.
 
 The small per-sample BBTools trimming, repair, and fusion commands use a fixed
-2 GB Java heap and declare 2.5 GB per job to Snakemake. This prevents concurrent
-BBTools processes from each auto-claiming most of the node's available memory.
+2 GB Java heap and declare 2.5 GB per job to Snakemake. The CARC launcher also
+sets BBMap 38.22's `RQCMEM` from the scheduling budget so automatically sized
+Java heaps do not assume the whole physical node is available. Explicit
+`-Xmx2g` limits remain unchanged. Java heap limits do not include all native
+process memory, and scheduling estimates do not enforce actual RAM use.
+
+### Editable resource profile
+
+Both launchers select `workflow/profiles/resources/config.yaml` through
+Snakemake's native `--workflow-profile` option. This plain YAML file contains
+editable per-rule estimates, one-worker limits for the five taxonomy
+classification rules, and a shared `heavy_step` scheduling token. Only one of
+the thirteen tagged splitting, denoising, classification, species-matching or
+classifier-training rules may run at a time. Lighter jobs may run alongside it
+when the CPU and estimated memory budgets permit. Rules without a specific
+memory estimate receive a 2,000 MB scheduling estimate, not a measured limit.
+
+The initial profile preserves the existing rule memory/runtime estimates.
+The `.smk` declarations remain unchanged as fallbacks for direct runs without
+a selected profile; the selected profile overrides them. No scientific
+threshold, database choice, result path or analysis branch changes. Separate
+workshop/large-dataset presets and a minimum laptop RAM requirement have not
+been validated and are not supplied by this patch.
+
+To select your own edited profile directory, set the same override for either
+launcher, for example:
+
+```bash
+EASV_RESOURCE_PROFILE=workflow/profiles/my-resources bash run_snakemake_USC_CARC_only.sh
+```
+
+The profile directory must contain `config.yaml`. Keep the heavy-rule tags and
+the global `heavy_step: 1` limit if you want the one-heavy-step safeguard. With
+the local launcher, the existing one-CPU default remains; no automatic RAM
+budget or hardware check is added. For an explicitly chosen local scheduling
+budget, include both global resources because command-line `--resources`
+replaces the profile's global resource map:
+
+```bash
+bash run_snakemake.sh --resources mem_mb=60000 heavy_step=1
+```
+
+The 60,000 MB figure above is an example, not a supported minimum or a hard
+process-memory limit. In Snakemake 9.9, a rule estimate larger than the global
+budget is scaled down for scheduling; this does not make the program fit in
+less RAM. Prebuilt references still need memory even for small datasets.
+Measure a pilot before reducing an allocation, and check the dry-run before
+resuming a completed project. Changing worker counts may trigger normal
+provenance-based reruns. No environment deletion or metadata cleanup is needed.
 
 Sample identifiers are imported as text when the final QIIME metadata tables
 are assembled, so numeric-only IDs and leading zeroes are retained correctly.

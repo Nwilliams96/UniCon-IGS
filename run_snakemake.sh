@@ -30,8 +30,12 @@ fi
 mkdir -p "${CONDA_ENV_PREFIX}"
 echo "Rule-specific Conda environments: ${CONDA_ENV_PREFIX}"
 
+# Select the same editable resource policy for local execution.
+RESOURCE_PROFILE="${EASV_RESOURCE_PROFILE:-workflow/profiles/resources}"
+
 snakemake \
   --snakefile workflow/Snakefile \
+  --workflow-profile "${RESOURCE_PROFILE}" \
   --use-conda \
   --conda-prefix "${CONDA_ENV_PREFIX}" \
   --cores 1 \

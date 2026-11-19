@@ -132,10 +132,39 @@ echo "Rule-specific Conda environments: ${CONDA_ENV_PREFIX}"
 TARGET="${1:-}"
 PIPELINE_CORES="${SLURM_CPUS_PER_TASK:-1}"
 
+# Select the editable resource profile; allow a different profile when needed.
+RESOURCE_PROFILE="${EASV_RESOURCE_PROFILE:-workflow/profiles/resources}"
+
+# Read the actual single-node allocation rather than assuming 128 GB.
+if [[ "${SLURM_MEM_PER_NODE:-}" =~ ^[1-9][0-9]*$ ]]; then
+  # Slurm supplies the requested node memory in MiB.
+  ALLOCATED_MEM_MIB="${SLURM_MEM_PER_NODE}"
+elif [[ "${SLURM_MEM_PER_CPU:-}" =~ ^[1-9][0-9]*$ ]]; then
+  # Support allocations expressed as memory per allocated CPU.
+  ALLOCATED_MEM_MIB=$((SLURM_MEM_PER_CPU * PIPELINE_CORES))
+else
+  # Do not silently invent a memory budget when the allocation is unclear.
+  echo "Specify a positive Slurm --mem or --mem-per-cpu allocation." >&2
+  exit 2
+fi
+
+# Convert Slurm's MiB into decimal MB for Snakemake.
+ALLOCATED_MEM_MB=$((ALLOCATED_MEM_MIB * 1048576 / 1000000))
+
+# Leave 10% outside the scheduling budget for overhead.
+PIPELINE_MEM_MB=$((ALLOCATED_MEM_MB * 90 / 100))
+
+# Bound BBTools' automatic heap calculation using that budget.
+# Explicit limits such as -Xmx2g remain unchanged.
+export RQCMEM=$((PIPELINE_MEM_MB * 1000000 / 1048576))
+
 SNAKEMAKE_ARGS=(
   --snakefile workflow/Snakefile
   --cores "${PIPELINE_CORES}"
-  --resources mem_mb=120000
+  # Load resource estimates and worker limits from the selected profile.
+  --workflow-profile "${RESOURCE_PROFILE}"
+  # Schedule against the actual allocation and allow one heavy step at a time.
+  --resources "mem_mb=${PIPELINE_MEM_MB}" heavy_step=1
   --use-conda
   --conda-prefix "${CONDA_ENV_PREFIX}"
   --rerun-incomplete
@@ -149,7 +178,7 @@ fi
 
 # Snakemake invocation
 # - --cores: use every CPU allocated by Slurm
-# - --resources: prevent concurrent rules from exceeding the node's memory
+# - --resources: controls scheduling estimates, not actual process memory usage
 # - --use-conda: create/use conda envs declared in workflow
 # - --conda-prefix: reuse matching rule environments across project clones
 # - --rerun-incomplete: pick up partial outputs

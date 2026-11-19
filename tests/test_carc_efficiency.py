@@ -11,7 +11,10 @@ class CarcEfficiencyTests(unittest.TestCase):
         self.assertIn("#SBATCH --cpus-per-task=8", runner)
         self.assertIn('PIPELINE_CORES="${SLURM_CPUS_PER_TASK:-1}"', runner)
         self.assertIn('--cores "${PIPELINE_CORES}"', runner)
-        self.assertIn("--resources mem_mb=120000", runner)
+        self.assertNotIn("--resources mem_mb=120000", runner)
+        self.assertIn('--resources "mem_mb=${PIPELINE_MEM_MB}" heavy_step=1', runner)
+        self.assertIn('ALLOCATED_MEM_MB=$((ALLOCATED_MEM_MIB * 1048576 / 1000000))', runner)
+        self.assertIn('PIPELINE_MEM_MB=$((ALLOCATED_MEM_MB * 90 / 100))', runner)
 
     def test_runner_labels_jobs_from_project_name(self):
         runner = (ROOT / "run_snakemake_USC_CARC_only.sh").read_text(encoding="utf-8")

@@ -1,0 +1,45 @@
+# Keep execution-resource settings separate from scientific processing rules.
+
+resources:
+  heavy_step: 1  # Allow only one tagged heavy rule at a time.
+
+default-resources:
+  mem_mb: 2000  # Give otherwise unannotated jobs a scheduling estimate.
+
+set-threads:
+  classify_ASVs: 1                     # Avoid parallel SILVA model copies.
+  classify_unmerged_16S_with_SILVA: 1   # Apply the same limit to the supplement.
+  classify_all_16S_with_PR2: 1          # Classify canonical plastid candidates serially.
+  classify_unmerged_16S_with_PR2: 1     # Classify supplementary features serially.
+  classify_18S_with_PR2: 1              # Avoid parallel PR2 model copies for 18S.
+
+set-resources:
+  # Preserve current estimates for downloading and preparing references.
+  download_prok_db: {mem_mb: 1024, runtime: 30}
+  download_euk_db: {mem_mb: 1024, runtime: 30}
+  prepare_bbsplit_db: {mem_mb: 64000, runtime: 240, heavy_step: 1}
+  train_classifier: {mem_mb: 110000, runtime: 720, heavy_step: 1}
+  train_classifier_pr2: {mem_mb: 32000, runtime: 360, heavy_step: 1}
+  ensure_pr2_classifier: {mem_mb: 2000, runtime: 30}
+
+  # Keep reference-based splitting separate from other heavy processing.
+  bbsplit_prok_euk: {mem_mb: 64000, heavy_step: 1}
+
+  # Permit smaller read-processing jobs when CPU and memory budgets allow.
+  deinterleave_split_reads_euk: {mem_mb: 4000}
+  deinterleave_split_reads_prok: {mem_mb: 4000}
+  bbduk_cut_reads: {mem_mb: 2500}
+  fuse_trimmed_euk_seqs: {mem_mb: 2500}
+
+  # Prevent concurrent DADA2 runs from competing for memory.
+  denoise_prok_dada2: {mem_mb: 96000, heavy_step: 1}
+  denoise_prok_dada2_with_unmerged: {mem_mb: 96000, heavy_step: 1}
+  denoise_euk_dada2: {mem_mb: 96000, heavy_step: 1}
+
+  # Prevent classifier and species-matching jobs from overlapping.
+  classify_ASVs: {mem_mb: 64000, heavy_step: 1}
+  classify_unmerged_16S_with_SILVA: {mem_mb: 64000, heavy_step: 1}
+  classify_all_16S_with_PR2: {mem_mb: 110000, heavy_step: 1}
+  classify_unmerged_16S_with_PR2: {mem_mb: 110000, heavy_step: 1}
+  classify_18S_with_PR2: {mem_mb: 110000, heavy_step: 1}
+  assign_SILVA_species: {mem_mb: 110000, runtime: 360, heavy_step: 1}
